@@ -125,25 +125,45 @@ The layout resizes with your terminal: posters keep their shape, cards stretch t
 
 ## 🚀 Quick start
 
-**You need:** a recent stable [Rust](https://rustup.rs) toolchain and [mpv](https://mpv.io/installation/) on your `PATH`.
+### Install
+
+| Platform | Command |
+|---|---|
+| **Windows** (winget) | `winget install CyberSarvesh.TuiNime` |
+| **Windows** (Scoop) | `scoop bucket add tuinime https://github.com/CyberSarvesh/scoop-bucket` then `scoop install tuinime` |
+| **macOS / Linux** (Homebrew) | `brew install CyberSarvesh/tap/tuinime` |
+| **Arch Linux** (AUR) | `yay -S tuinime-bin` |
+| **Any OS** (Rust) | `cargo install tuinime` or `cargo binstall tuinime` |
+
+Or use the one-line installers from the [latest release](https://github.com/CyberSarvesh/TuiNime/releases/latest):
 
 ```bash
-# mpv — pick your platform
-scoop install mpv          # Windows
-brew install mpv           # macOS
-sudo apt install mpv       # Debian / Ubuntu
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/CyberSarvesh/TuiNime/releases/latest/download/tuinime-installer.sh | sh
 ```
 
-Then, from this folder:
-
-```bash
-cargo run --release
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/CyberSarvesh/TuiNime/releases/latest/download/tuinime-installer.ps1 | iex"
 ```
 
-Or install it as a `tuinime` command:
+### mpv
+
+tuinime plays video in [mpv](https://mpv.io/installation/), so it needs to be on your `PATH`. Scoop and the AUR install it for you; otherwise:
 
 ```bash
-cargo install --path .
+winget install shinchiro.mpv   # Windows
+brew install mpv               # macOS
+sudo apt install mpv           # Debian / Ubuntu
+```
+
+### From source
+
+With a recent stable [Rust](https://rustup.rs) toolchain, from this folder:
+
+```bash
+cargo run --release      # try it
+cargo install --path .   # or install the tuinime command
 ```
 
 > [!TIP]
