@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
     Frame,
@@ -9,6 +9,7 @@ use ratatui::{
 use crate::backend::cache::ImageCache;
 use crate::backend::providers::traits::Anime;
 use crate::frontend::theme::Theme;
+use crate::frontend::widgets::poster::PosterRenderer;
 
 #[derive(Debug, Clone)]
 pub struct HeroState {
@@ -39,7 +40,7 @@ impl HeroState {
     }
 }
 
-pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, theme: Theme) {
+pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, posters: &PosterRenderer, theme: Theme) {
     let block = Block::default()
         .borders(Borders::ALL).border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border))
@@ -53,11 +54,11 @@ pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, t
     let text_area = Rect { x: inner.x + cover_w + 2, y: inner.y, width: inner.width.saturating_sub(cover_w + 2), height: inner.height };
     let cover_area = Rect { x: inner.x, y: inner.y, width: cover_w, height: inner.height };
 
-    let rendered_image = try_render_poster(f, cover_area, hero.poster_url.as_deref(), cache);
+    let rendered_image = hero.poster_url.as_deref().is_some_and(|u| posters.render(f, cover_area, u, cache));
     if !rendered_image {
         let cover_block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(110, 95, 78)))
-            .style(Style::default().bg(Color::Rgb(42, 38, 32)));
+            .border_style(Style::default().fg(theme.border))
+            .style(Style::default().bg(theme.surface_hover));
         let cover_inner = cover_block.inner(cover_area);
         f.render_widget(cover_block, cover_area);
         let status = hero.poster_url.as_deref().map(|u| if cache.is_cached(u) { "● cached" } else { "○ loading…" }).unwrap_or("—");
@@ -79,7 +80,7 @@ pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, t
         Span::styled(hero.score.map(|s| format!("★ {s}")).unwrap_or_default(), Style::default().fg(theme.accent)),
     ]);
     let desc_raw = hero.description.replace('\n', " ").trim().to_string();
-    let desc_trim = if desc_raw.chars().count() > 220 { let mut s: String = desc_raw.chars().take(217).collect(); s.push_str("…"); s } else { desc_raw };
+    let desc_trim = if desc_raw.chars().count() > 220 { let mut s: String = desc_raw.chars().take(217).collect(); s.push('…'); s } else { desc_raw };
     let desc_para = Paragraph::new(vec![
         title_line,
         Line::from(Span::styled("  ─────────────────────────────────────", Style::default().fg(theme.text_muted))),
@@ -90,13 +91,3 @@ pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, t
     f.render_widget(desc_para, text_area);
 }
 
-fn try_render_poster(f: &mut Frame, area: Rect, url: Option<&str>, cache: &ImageCache) -> bool {
-    let Some(u) = url else { return false; };
-    let Some(img) = cache.try_load_cached_image(u) else { return false; };
-    use ratatui_image::{picker::Picker, StatefulImage};
-    let mut picker = Picker::from_fontsize((8, 16));
-    let protocol = picker.new_resize_protocol(img);
-    let mut state = protocol;
-    f.render_stateful_widget(StatefulImage::new(None), area, &mut state);
-    true
-}

@@ -5,6 +5,7 @@ use std::io;
 
 use anyhow::Result;
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -22,17 +23,21 @@ async fn main() -> Result<()> {
     let orig_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Clear(ClearType::All));
+        let _ = execute!(std::io::stdout(), DisableMouseCapture, LeaveAlternateScreen, Clear(ClearType::All));
         orig_hook(info);
     }));
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new().await;
+    // Ask the terminal which image protocol it supports (Kitty / Sixel / iTerm2) once, after
+    // entering the alternate screen and before reading events; fall back to unicode halfblocks.
+    let picker = ratatui_image::picker::Picker::from_query_stdio()
+        .unwrap_or_else(|_| ratatui_image::picker::Picker::from_fontsize((8, 16)));
+    let mut app = App::new(frontend::widgets::poster::PosterRenderer::new(picker));
     let mut events = EventHandler::new(500);
     app.spawn_initial_fetch();
 
@@ -62,7 +67,7 @@ fn force_restore<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) {
     let _ = disable_raw_mode();
     // clear entire screen before leaving alternate buffer — prevents ghost / jam artifacts.
     // We write to the real stdout handle; the `Terminal`'s backend shares the same fd.
-    let _ = execute!(std::io::stdout(), Clear(ClearType::All), LeaveAlternateScreen);
+    let _ = execute!(std::io::stdout(), Clear(ClearType::All), DisableMouseCapture, LeaveAlternateScreen);
     let _ = terminal.show_cursor();
 }
 
@@ -99,34 +104,27 @@ where
         // and the Ctrl+C key path below bypasses `app.on_key` throttling via instant `force_restore`.
         terminal.draw(|f| frontend::ui::render(f, app))?;
 
-        // also race each event poll vs SIGINT so a throttled/flooded channel can't delay Ctrl+C
+        // race input vs background results (search / streams / trending) vs SIGINT, so results
+        // show up immediately instead of waiting for the next tick, and Ctrl+C is never delayed
         let ev = tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                // instant close: clear entire screen, no throttling
                 force_restore(terminal);
                 std::process::exit(130);
+            }
+            Some(bg) = app.next_background() => {
+                app.on_background(bg).await;
+                continue;
             }
             ev = events.next() => ev,
         };
 
         match ev {
-            Some(Ok(Event::Key(k))) if k.kind == crossterm::event::KeyEventKind::Press => {
-                // failsafe: Ctrl+C must never be throttled or await a slow resolver — exit before any await
-                if is_ctrl_c(&k) {
-                    force_restore(terminal);
-                    std::process::exit(130);
-                }
-                // also handle Ctrl+C with release/repeat variants (raw mode may emit them)
-                app.on_key(k).await;
-                if is_ctrl_c(&k) {
-                    force_restore(terminal);
-                    std::process::exit(130);
-                }
-            }
             Some(Ok(Event::Key(k))) if is_ctrl_c(&k) => {
+                // failsafe: Ctrl+C must never wait on anything — exit before any await
                 force_restore(terminal);
                 std::process::exit(130);
             }
+            Some(Ok(Event::Key(k))) if k.kind == crossterm::event::KeyEventKind::Press => app.on_key(k).await,
             Some(Ok(Event::Mouse(m))) => app.on_mouse(m).await,
             Some(Ok(Event::Resize(_, _))) => {}
             Some(Ok(Event::Tick)) => app.on_tick().await,

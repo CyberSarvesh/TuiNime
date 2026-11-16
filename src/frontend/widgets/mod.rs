@@ -5,6 +5,6 @@ pub mod poster;
 pub mod scrollbar;
 pub mod selector;
 
-pub use poster::Poster;
+pub use poster::PosterRenderer;
 pub use scrollbar::{ThemedScrollbar, scrollbar_track};
 pub use selector::{Selector, SelectorItem};

@@ -62,7 +62,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect, t: Theme) {
 
 fn render_hero(f: &mut Frame, app: &App, area: Rect, theme: Theme) {
     let padded = Rect { x: area.x + 1, y: area.y, width: area.width.saturating_sub(2), height: area.height };
-    hero::render(f, &app.hero, padded, &app.backend.cache, theme);
+    hero::render(f, &app.hero, padded, &app.backend.cache, &app.posters, theme);
 }
 
 fn render_carousels(f: &mut Frame, app: &App, area: Rect, t: Theme) {
@@ -84,7 +84,7 @@ fn render_carousels(f: &mut Frame, app: &App, area: Rect, t: Theme) {
     for (i, (carousel, row_area)) in app.carousels.iter().zip(rows.iter()).enumerate() {
         let focused = app.active_carousel == i && matches!(app.view, crate::frontend::app::AppView::Browse);
         let inset = Rect { x: row_area.x + 1, y: row_area.y, width: row_area.width.saturating_sub(2), height: row_area.height };
-        carousel::render(f, carousel, inset, focused, &app.backend.cache, t);
+        carousel::render(f, carousel, inset, focused, &app.backend.cache, &app.posters, t);
     }
 }
 

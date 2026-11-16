@@ -6,12 +6,12 @@ pub mod providers;
 pub use cache::ImageCache;
 pub use player::MpvPlayer;
 pub use providers::traits::{Anime, StreamSource};
-#[allow(unused_imports)]
 pub use providers::aggregator::ProviderAggregator;
 pub use providers::anilist::AniListClient;
 pub use providers::allanime::AllAnimeProvider;
-#[allow(unused_imports)]
 pub use providers::scraper::ScraperProvider;
+
+use std::sync::Arc;
 
 use anyhow::Result;
 
@@ -19,7 +19,15 @@ use anyhow::Result;
 pub struct MiruBackend {
     pub cache: ImageCache,
     pub player: MpvPlayer,
-    aggregator: ProviderAggregator<AniListClient>,
+    catalog: Catalog,
+}
+
+/// Cheap-to-clone handle for the network side (metadata + stream resolution), so the UI can
+/// run searches/resolves on background tasks instead of blocking the render loop.
+#[derive(Clone)]
+pub struct Catalog {
+    cache: ImageCache,
+    aggregator: Arc<ProviderAggregator<AniListClient>>,
 }
 
 impl MiruBackend {
@@ -28,41 +36,55 @@ impl MiruBackend {
             tracing::warn!("cache init failed: {e}; temp fallback");
             ImageCache::new_temp()
         });
-        let meta = AniListClient::new();
-        let mut aggregator = ProviderAggregator::new(meta);
-        aggregator.add_provider_front(AllAnimeProvider::new());
-        Self { cache, player: MpvPlayer::new(), aggregator }
+        let mut aggregator = ProviderAggregator::new(AniListClient::new());
+        aggregator.add_provider(AllAnimeProvider::new());
+        // The public Consumet instance is dead; only use one the user runs themselves.
+        if std::env::var_os("MIRU_CONSUMET_URL").is_some() {
+            aggregator.add_provider(ScraperProvider::new());
+        }
+        let catalog = Catalog { cache: cache.clone(), aggregator: Arc::new(aggregator) };
+        Self { cache, player: MpvPlayer::new(), catalog }
     }
 
-    // --- metadata (AniList) with cozy fallback so UI never shows "nothing here yet" ---
+    pub fn catalog(&self) -> Catalog { self.catalog.clone() }
+    pub fn player_mut(&mut self) -> &mut MpvPlayer { &mut self.player }
+}
+
+impl Catalog {
+    fn warm(&self, list: &[Anime]) {
+        let urls: Vec<String> = list.iter().filter_map(|a| a.cover_image.clone()).collect();
+        self.cache.prefetch_many(urls);
+    }
+
+    // --- metadata (AniList) with fallback so UI never shows "nothing here yet" ---
     pub async fn trending(&self, limit: u8) -> Vec<Anime> {
         match self.aggregator.trending(limit).await {
             Ok(list) if !list.is_empty() => {
-                // warm poster cache (cozy, not blocking)
-                let urls: Vec<String> = list.iter().filter_map(|a| a.cover_image.clone()).collect();
-                self.cache.prefetch_many(urls);
+                self.warm(&list);
                 list
             }
             Ok(_) | Err(_) => {
-                tracing::warn!("trending offline, using cozy fallback");
+                tracing::warn!("trending offline, using fallback");
                 fallback_anime()
             }
         }
     }
 
+    pub async fn seasonal(&self, year: u16, season: &str, limit: u8) -> Result<Vec<Anime>> {
+        let list = self.aggregator.seasonal(year, season, limit).await?;
+        self.warm(&list);
+        Ok(list)
+    }
+
     pub async fn search(&self, q: &str, limit: u8) -> Result<Vec<Anime>> {
         let res = self.aggregator.search(q, limit).await?;
-        let urls: Vec<String> = res.iter().filter_map(|a| a.cover_image.clone()).collect();
-        self.cache.prefetch_many(urls);
+        self.warm(&res);
         Ok(res)
     }
 
     pub async fn resolve(&self, anime: &Anime) -> Result<Vec<StreamSource>> {
         self.aggregator.resolve_for_anime(anime).await
     }
-
-    pub fn cache(&self) -> &ImageCache { &self.cache }
-    pub fn player_mut(&mut self) -> &mut MpvPlayer { &mut self.player }
 }
 
 impl Default for MiruBackend {

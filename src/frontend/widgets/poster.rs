@@ -1,34 +1,52 @@
-//! Poster — shared image helper so `hero`/`carousel`/`detail` don't duplicate `ImageCache` logic.
+//! Poster rendering shared by `hero` and `carousel`.
+//!
+//! The `Picker` is created once at startup (it knows whether the terminal speaks Kitty,
+//! Sixel, iTerm2 or only unicode halfblocks). Encoded image states are cached per
+//! (url, size), so a poster is decoded and encoded once rather than on every frame.
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::StatefulImage;
 
 use crate::backend::cache::ImageCache;
-use crate::frontend::theme::Theme;
 
-/// Renders a poster placeholder / cached thumbnail indicator.
-/// Real `ratatui-image` protocol rendering stays in `hero` for now; this is the seam.
-pub struct Poster<'a> {
-    pub url: Option<&'a str>,
-    pub cache: &'a ImageCache,
-    pub theme: Theme,
+const MAX_CACHED_STATES: usize = 64;
+
+pub struct PosterRenderer {
+    picker: Picker,
+    states: RefCell<HashMap<(String, u16, u16), StatefulProtocol>>,
 }
 
-impl<'a> Poster<'a> {
-    pub fn render(self, f: &mut Frame, area: Rect) {
-        let filled = self.url.map(|u| self.cache.is_cached(u)).unwrap_or(false);
-        let (glyph, color) = if filled {
-            ("▓ poster cached ▓", self.theme.accent_green)
-        } else if self.url.is_some() {
-            ("◇ loading… ◇", self.theme.text_muted)
+impl PosterRenderer {
+    pub fn new(picker: Picker) -> Self {
+        Self { picker, states: RefCell::new(HashMap::new()) }
+    }
+
+    /// Draw the poster for `url` into `area` if it is already on disk.
+    /// Returns `false` (draw a placeholder instead) when it isn't downloaded yet.
+    pub fn render(&self, f: &mut Frame, area: Rect, url: &str, cache: &ImageCache) -> bool {
+        if area.width == 0 || area.height == 0 {
+            return false;
+        }
+        let key = (url.to_string(), area.width, area.height);
+        let mut states = self.states.borrow_mut();
+        if !states.contains_key(&key) {
+            let Some(img) = cache.try_load_cached_image(url) else { return false };
+            if states.len() >= MAX_CACHED_STATES {
+                states.clear();
+            }
+            let mut picker = self.picker;
+            states.insert(key.clone(), picker.new_resize_protocol(img));
+        }
+        if let Some(state) = states.get_mut(&key) {
+            f.render_stateful_widget(StatefulImage::new(None), area, state);
+            true
         } else {
-            ("— no image —", self.theme.text_muted)
-        };
-        let p = Paragraph::new(glyph)
-            .style(Style::default().fg(color).bg(self.theme.surface_hover))
-            .block(Block::default().borders(Borders::NONE))
-            .centered();
-        f.render_widget(p, area);
+            false
+        }
     }
 }

@@ -37,7 +37,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, t: Theme) {
     // For true separate-screen, use `let popup = area;` — keeping overlay for now.
     let popup = centered_rect(56, 18, area);
     f.render_widget(ratatui::widgets::Clear, popup);
-    let title = app.carousels.get(app.active_carousel).and_then(|c| c.selected_item()).map(|a| a.title.as_str()).unwrap_or("playback");
+    let title = app.now_playing.as_deref().unwrap_or("playback");
     let block = Block::default().title(format!("  ▶  {}  ", title)).title_style(Style::default().fg(t.accent_green))
         .borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.accent_green))
         .style(Style::default().bg(t.surface)).padding(Padding::new(1, 1, 0, 0));
