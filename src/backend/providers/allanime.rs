@@ -23,6 +23,7 @@ use super::traits::{Anime, AnimeProvider, Episode, StreamSource};
 const ALLANIME_API: &str = "https://api.allanime.day/api";
 const ALLANIME_REFR: &str = "https://allanime.to";
 const ALLANIME_BASE: &str = "allanime.day";
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
 
 #[derive(Clone)]
 pub struct AllAnimeProvider {
@@ -33,40 +34,44 @@ pub struct AllAnimeProvider {
 impl AllAnimeProvider {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .user_agent("tuinime/0.1")
-                .build().expect("reqwest"),
+            client: super::http_client(BROWSER_UA),
             mode: "sub".to_string(),
         }
     }
     pub fn with_mode(mode: impl Into<String>) -> Self {
-        Self { client: reqwest::Client::builder().user_agent("tuinime/0.1").build().expect("reqwest"), mode: mode.into() }
+        Self { client: super::http_client(BROWSER_UA), mode: mode.into() }
     }
 
+    /// Decode an AllAnime `--<hex>` source URL.
+    ///
+    /// ani-cli's long sed table is just every byte XOR `0x38` (e.g. `01` → `'9'` = 0x39).
+    /// Doing the XOR directly handles every character, not only the ~30 the table listed.
     fn decrypt_hex(hex: &str) -> String {
-        // ani-cli: `sed 's/../&\n/g' | sed 's/^01$/9/g; …' | tr -d '\n'`
-        let table: std::collections::HashMap<&str, &str> = [
-            ("01","9"),("08","0"),("05","="),("0a","2"),("0b","3"),("0c","4"),("07","?"),("00","8"),
-            ("5c","d"),("0f","7"),("5e","f"),("17","/"),("54","l"),("09","1"),("48","p"),("4f","w"),
-            ("0e","6"),("5b","c"),("5d","e"),("0d","5"),("53","k"),("1e","&"),("5a","b"),("59","a"),
-            ("4a","r"),("4c","t"),("4e","v"),("57","o"),("51","i"),
-        ].into_iter().collect();
-        let mut out = String::new();
         let clean = hex.trim().trim_start_matches("--");
-        for i in (0..clean.len()).step_by(2) {
-            if i + 2 > clean.len() { break; }
-            let pair = &clean[i..i+2].to_lowercase();
-            if let Some(mapped) = table.get(pair.as_str()) {
-                out.push_str(mapped);
-            } else {
-                // fallback: try parse as hex char
-                if let Ok(b) = u8::from_str_radix(pair, 16) {
-                    out.push(b as char);
-                }
-            }
+        if !clean.is_ascii() {
+            return String::new();
         }
-        out.replace("/clock", "/clock.json")
+        let bytes: Vec<u8> = clean
+            .as_bytes()
+            .chunks_exact(2)
+            .filter_map(|pair| std::str::from_utf8(pair).ok())
+            .filter_map(|pair| u8::from_str_radix(pair, 16).ok())
+            .map(|b| b ^ 0x38)
+            .collect();
+        let out = String::from_utf8_lossy(&bytes).into_owned();
+        if out.contains("/clock.json") { out } else { out.replace("/clock", "/clock.json") }
     }
+
+    fn referer_headers() -> Option<std::collections::HashMap<String, String>> {
+        Some([("Referer".to_string(), ALLANIME_REFR.to_string())].into_iter().collect())
+    }
+}
+
+/// Numeric rank for a quality label like "1080", "720p" or "1080p (HLS)"; unknown → 0.
+pub(crate) fn quality_rank(q: Option<&str>) -> u32 {
+    q.map(|q| q.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect::<String>())
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(0)
 }
 
 #[async_trait]
@@ -117,6 +122,7 @@ impl AnimeProvider for AllAnimeProvider {
         let gql = r#"query($showId: String!){show(_id: $showId){_id availableEpisodesDetail}}"#;
         let resp = self.client.post(ALLANIME_API)
             .header("Referer", ALLANIME_REFR)
+            .header("Origin", ALLANIME_REFR)
             .json(&json!({"query": gql, "variables": {"showId": anime_id}}))
             .send().await.context("allanime episodes")?;
         if !resp.status().is_success() {
@@ -159,6 +165,14 @@ impl AnimeProvider for AllAnimeProvider {
             .send().await.context("allanime episode")?;
 
         let v: serde_json::Value = resp.json().await?;
+        if let Some(errors) = v.get("errors") {
+            if errors.to_string().contains("AA_CRYPTO_MISSING") {
+                anyhow::bail!(
+                    "AllAnime now requires a signed request token (AA_CRYPTO_MISSING); this provider needs updating to match current ani-cli"
+                );
+            }
+            anyhow::bail!("allanime episode errors: {errors}");
+        }
         let source_urls = v.pointer("/data/episode/sourceUrls")
             .and_then(|x| x.as_array()).cloned().unwrap_or_default();
 
@@ -184,7 +198,7 @@ impl AnimeProvider for AllAnimeProvider {
             anyhow::bail!("no playable links for {episode_id}");
         }
         // sort by quality desc if present
-        sources.sort_by(|a,b| b.quality.cmp(&a.quality));
+        sources.sort_by_key(|s| std::cmp::Reverse(quality_rank(s.quality.as_deref())));
         Ok(sources)
     }
 }
@@ -208,7 +222,7 @@ impl AllAnimeProvider {
             if let Some(link) = extract_json_field(chunk, "link") {
                 let res = extract_json_field(chunk, "resolutionStr").unwrap_or_else(|| "0".to_string());
                 let url = link.replace("\\u002F", "/").replace('\\', "");
-                out.push(StreamSource { url: url.clone(), quality: Some(res), headers: None, is_m3u8: url.contains(".m3u8") });
+                out.push(StreamSource { is_m3u8: url.contains(".m3u8"), url, quality: Some(res), headers: Self::referer_headers() });
             } else if chunk.contains("\"hls\"") {
                 if let Some(url) = extract_json_field(chunk, "url") {
                     if url.contains("m3u8") {
@@ -216,7 +230,7 @@ impl AllAnimeProvider {
                         // expand m3u8 master playlist to individual qualities like ani-cli does
                         match self.expand_m3u8(&url).await {
                             Ok(mut v) => out.append(&mut v),
-                            Err(_) => out.push(StreamSource { url: url.clone(), quality: None, headers: None, is_m3u8: true }),
+                            Err(_) => out.push(StreamSource { url: url.clone(), quality: None, headers: Self::referer_headers(), is_m3u8: true }),
                         }
                     }
                 }
@@ -226,7 +240,7 @@ impl AllAnimeProvider {
             // fallback: find any http url in response
             for token in text.split('"') {
                 if token.starts_with("http") && (token.contains(".m3u8") || token.contains(".mp4")) {
-                    out.push(StreamSource { url: token.to_string(), quality: None, headers: None, is_m3u8: token.contains(".m3u8") });
+                    out.push(StreamSource { url: token.to_string(), quality: None, headers: Self::referer_headers(), is_m3u8: token.contains(".m3u8") });
                 }
             }
         }
@@ -243,9 +257,9 @@ impl AllAnimeProvider {
         while let Some(line) = lines.next() {
             if line.starts_with("#") && line.contains("x") {
                 if let Some(next) = lines.next() {
-                    let res = line.split('x').last().unwrap_or("0").split(',').next().unwrap_or("0");
+                    let res = line.split('x').next_back().unwrap_or("0").split(',').next().unwrap_or("0");
                     let full = if next.starts_with("http") { next.to_string() } else { format!("{base}{next}") };
-                    out.push(StreamSource { url: full, quality: Some(format!("{}p", res.trim())), headers: None, is_m3u8: true });
+                    out.push(StreamSource { url: full, quality: Some(format!("{}p", res.trim())), headers: Self::referer_headers(), is_m3u8: true });
                 }
             }
         }
@@ -263,4 +277,39 @@ fn extract_json_field(s: &str, field: &str) -> Option<String> {
 
 impl Default for AllAnimeProvider {
     fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn encode(plain: &str) -> String {
+        format!("--{}", plain.bytes().map(|b| format!("{:02x}", b ^ 0x38)).collect::<String>())
+    }
+
+    #[test]
+    fn decrypt_handles_every_character() {
+        // `m`, `s`, `n`, `u`, `.`, `:`, `-`, `_` were all missing from the old lookup table.
+        let plain = "/apivn/clock?id=Mx_9.sun-ma";
+        assert_eq!(AllAnimeProvider::decrypt_hex(&encode(plain)), "/apivn/clock.json?id=Mx_9.sun-ma");
+    }
+
+    #[test]
+    fn decrypt_does_not_double_json_suffix() {
+        assert_eq!(AllAnimeProvider::decrypt_hex(&encode("/clock.json?x=1")), "/clock.json?x=1");
+    }
+
+    #[test]
+    fn decrypt_matches_ani_cli_table_samples() {
+        // a few pairs straight from ani-cli's sed table
+        assert_eq!(AllAnimeProvider::decrypt_hex("--01080517"), "90=/");
+    }
+
+    #[test]
+    fn quality_sorts_numerically() {
+        assert!(quality_rank(Some("1080")) > quality_rank(Some("720")));
+        assert_eq!(quality_rank(Some("1080p (HLS)")), 1080);
+        assert_eq!(quality_rank(Some("auto")), 0);
+        assert_eq!(quality_rank(None), 0);
+    }
 }
