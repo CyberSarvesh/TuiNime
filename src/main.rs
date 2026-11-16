@@ -102,7 +102,15 @@ async fn run_app<B>(terminal: &mut Terminal<B>, app: &mut App, events: &mut Even
 where
     B: ratatui::backend::Backend,
 {
+    let mut last_screen = None;
     loop {
+        // Sixel images are pixels on the terminal, not cells, so ratatui's diffing can't erase
+        // them; wipe the screen whenever the screen or help popup changes so none are left behind.
+        let screen = (app.view, app.show_help);
+        if last_screen != Some(screen) {
+            terminal.clear()?;
+            last_screen = Some(screen);
+        }
         // draw is the only blocking call — if it jams, the outer `tokio::select!` on SIGINT still wins,
         // and the Ctrl+C key path below bypasses `app.on_key` throttling via instant `force_restore`.
         terminal.draw(|f| frontend::ui::render(f, app))?;
