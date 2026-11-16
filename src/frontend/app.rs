@@ -11,7 +11,7 @@ use crate::frontend::widgets::poster::PosterRenderer;
 
 // re-export for `crate::frontend::app::AppView` compat (old import path)
 pub use crate::frontend::state::AppView;
-use crate::frontend::state::{remember_search, DetailState, Episodes, SearchResults, SearchState, Status};
+use crate::frontend::state::{remember_search, DetailState, Episodes, HitTarget, Hits, SearchResults, SearchState, Status};
 
 pub const ROW_CONTINUE: usize = 0;
 pub const ROW_TRENDING: usize = 1;
@@ -43,6 +43,8 @@ pub struct App {
     pub player_return: AppView,
     /// The key-help popup is open (it takes all keys until closed).
     pub show_help: bool,
+    /// Clickable areas from the last frame (filled in while rendering).
+    pub hits: Hits,
     /// Show whose streams are being looked up, so repeated `p` presses don't stack requests.
     resolving: Option<String>,
     /// Screen to return to when leaving details (browse or search).
@@ -70,7 +72,7 @@ impl App {
             search: SearchState::default(), recent_searches: Vec::new(),
             status: Status::info("welcome"), tick: 0,
             backend, theme: Theme::cozy(), posters, now_playing: None,
-            detail: None, dub: false, player_return: AppView::Browse, show_help: false,
+            detail: None, dub: false, player_return: AppView::Browse, show_help: false, hits: Hits::default(),
             resolving: None, detail_return: AppView::Browse, state_path: None, bg_tx, bg_rx,
         }
     }
@@ -407,12 +409,68 @@ impl App {
     }
 
     pub async fn on_mouse(&mut self, event: MouseEvent) {
-        use crossterm::event::MouseEventKind;
-        if self.view != AppView::Browse { return; }
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if self.show_help || self.view == AppView::Player {
+            return;
+        }
         match event.kind {
-            MouseEventKind::ScrollDown => self.scroll(true),
-            MouseEventKind::ScrollUp => self.scroll(false),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let at = ratatui::layout::Position::new(event.column, event.row);
+                let hits = self.hits.take();
+                let target = hits.iter().find(|(r, _)| r.contains(at)).map(|(_, t)| *t);
+                self.hits.set(hits);
+                if let Some(t) = target {
+                    self.click(t);
+                }
+            }
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+                let down = matches!(event.kind, MouseEventKind::ScrollDown);
+                match self.view {
+                    AppView::Browse => self.scroll(down),
+                    AppView::Search => self.search.move_by(if down { 1 } else { -1 }, &self.recent_searches),
+                    AppView::Detail => {
+                        if let Some(d) = self.detail.as_mut() {
+                            let cols = d.grid_cols.get().max(1) as isize;
+                            d.move_by(if down { cols } else { -cols });
+                        }
+                    }
+                    AppView::Player => {}
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// First click selects; clicking the selected thing again opens (or plays) it.
+    fn click(&mut self, target: HitTarget) {
+        match target {
+            HitTarget::Card { row, index } => {
+                let already = self.active_carousel == row && self.carousels.get(row).is_some_and(|c| c.selected == index);
+                if already {
+                    if let Some(anime) = self.selected().cloned() {
+                        self.open_detail(anime);
+                    }
+                } else if let Some(c) = self.carousels.get_mut(row) {
+                    c.selected = index.min(c.items.len().saturating_sub(1));
+                    self.active_carousel = row;
+                    self.sync_hero();
+                }
+            }
+            HitTarget::SearchResult(i) => {
+                if self.search.selected == i {
+                    self.search_enter();
+                } else {
+                    self.search.selected = i;
+                }
+            }
+            HitTarget::Episode(i) => {
+                let Some(d) = self.detail.as_mut() else { return };
+                if d.selected == i {
+                    self.play_detail_episode();
+                } else {
+                    d.selected = i;
+                }
+            }
         }
     }
 

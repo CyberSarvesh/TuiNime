@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::frontend::app::{App, AppView};
-use crate::frontend::state::spinner_frame;
+use crate::frontend::state::{add_hit, spinner_frame, HitTarget};
 use crate::frontend::theme::Theme;
 use crate::frontend::ui::carousel::{self, RowStyle};
 use crate::frontend::ui::hero;
@@ -58,7 +58,9 @@ fn render_rows(f: &mut Frame, app: &App, area: Rect, t: Theme) {
             focused: app.active_carousel == row && app.view == AppView::Browse,
             spinner: spinner_frame(app.tick),
         };
-        carousel::render(f, &app.carousels[row], row_area, style, &app.backend.cache, &app.posters, t);
+        for (rect, index) in carousel::render(f, &app.carousels[row], row_area, style, &app.backend.cache, &app.posters, t) {
+            add_hit(&app.hits, rect, HitTarget::Card { row, index });
+        }
         y += h;
     }
 }

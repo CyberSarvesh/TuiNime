@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::frontend::app::App;
-use crate::frontend::state::{spinner_frame, DetailState, Episodes};
+use crate::frontend::state::{add_hit, spinner_frame, DetailState, Episodes, HitTarget, Hits};
 use crate::frontend::theme::Theme;
 use crate::frontend::ui::hero::{poster_width_for, render_cover_placeholder};
 use crate::frontend::widgets::meta;
@@ -36,10 +36,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, t: Theme) {
     }
     let gap = if poster_w > 0 { 2 } else { 0 };
     let right = Rect { x: area.x + poster_w + gap, width: area.width - poster_w - gap, ..area };
-    render_info(f, d, right, app.dub, app.tick, t);
+    render_info(f, d, right, app, t);
 }
 
-fn render_info(f: &mut Frame, d: &DetailState, area: Rect, dub: bool, tick: u64, t: Theme) {
+fn render_info(f: &mut Frame, d: &DetailState, area: Rect, app: &App, t: Theme) {
     let a = &d.anime;
     let mut head = vec![
         Line::from(Span::styled(a.title.clone(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD))),
@@ -66,7 +66,7 @@ fn render_info(f: &mut Frame, d: &DetailState, area: Rect, dub: bool, tick: u64,
     render_description(f, d, desc_area, t);
 
     let eps_area = Rect { y: rest.y + desc_h + 1, height: rest.height.saturating_sub(desc_h + 1), ..rest };
-    render_episodes(f, d, eps_area, dub, tick, t);
+    render_episodes(f, d, eps_area, app.dub, app.tick, &app.hits, t);
 }
 
 fn desc_text(d: &DetailState) -> &str {
@@ -104,7 +104,7 @@ fn listed_as(d: &DetailState) -> String {
     }
 }
 
-fn render_episodes(f: &mut Frame, d: &DetailState, area: Rect, dub: bool, tick: u64, t: Theme) {
+fn render_episodes(f: &mut Frame, d: &DetailState, area: Rect, dub: bool, tick: u64, hits: &Hits, t: Theme) {
     if area.height < 3 {
         return;
     }
@@ -174,7 +174,12 @@ fn render_episodes(f: &mut Frame, d: &DetailState, area: Rect, dub: bool, tick: 
                 Span::styled(format!("{label} "), style)
             })
             .collect();
-        f.render_widget(Paragraph::new(Line::from(spans)), Rect { y: inner.y + row as u16, height: 1, ..inner });
+        let y = inner.y + row as u16;
+        f.render_widget(Paragraph::new(Line::from(spans)), Rect { y, height: 1, ..inner });
+        for i in start..(start + cols).min(list.episodes.len()) {
+            let x = inner.x + ((i - start) as u16) * EP_CELL_W;
+            add_hit(hits, Rect { x, y, width: EP_CELL_W - 1, height: 1 }, HitTarget::Episode(i));
+        }
     }
     if inner.height >= 2 {
         let ep = &list.episodes[d.selected.min(list.episodes.len() - 1)];

@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::backend::Anime;
 use crate::frontend::app::App;
-use crate::frontend::state::{spinner_frame, SearchResults};
+use crate::frontend::state::{add_hit, spinner_frame, HitTarget, SearchResults};
 use crate::frontend::theme::Theme;
 use crate::frontend::ui::hero::render_cover_placeholder;
 use crate::frontend::widgets::meta;
@@ -91,6 +91,7 @@ fn render_results(f: &mut Frame, app: &App, results: &[Anime], area: Rect, t: Th
         let y = area.y + ((row - first) as u16) * RESULT_H;
         let rect = Rect { y, height: RESULT_H.min(area.y + area.height - y), ..area };
         render_result(f, app, anime, rect, row == app.search.selected, t);
+        add_hit(&app.hits, rect, HitTarget::SearchResult(row));
     }
     let shown = format!(" {}/{} ", app.search.selected + 1, results.len());
     f.render_widget(

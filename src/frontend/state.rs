@@ -13,6 +13,27 @@ pub enum AppView {
     Player,
 }
 
+/// Something on screen that a mouse click can select.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitTarget {
+    /// Card `index` in carousel `row` (browse).
+    Card { row: usize, index: usize },
+    /// Row `n` of the search results.
+    SearchResult(usize),
+    /// Episode `n` in the details grid.
+    Episode(usize),
+}
+
+/// Clickable areas from the last frame; rebuilt on every draw.
+pub type Hits = Cell<Vec<(ratatui::layout::Rect, HitTarget)>>;
+
+/// Record a clickable area for this frame.
+pub fn add_hit(hits: &Hits, rect: ratatui::layout::Rect, target: HitTarget) {
+    let mut v = hits.take();
+    v.push((rect, target));
+    hits.set(v);
+}
+
 /// How the status bar should present a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {

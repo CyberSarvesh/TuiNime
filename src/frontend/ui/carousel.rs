@@ -66,7 +66,10 @@ pub struct RowStyle<'a> {
     pub spinner: &'a str,
 }
 
-pub fn render(f: &mut Frame, state: &CarouselState, area: Rect, style: RowStyle, cache: &ImageCache, posters: &PosterRenderer, t: Theme) {
+/// Where each drawn card landed: (area, item index). Used for mouse clicks.
+pub type CardAreas = Vec<(Rect, usize)>;
+
+pub fn render(f: &mut Frame, state: &CarouselState, area: Rect, style: RowStyle, cache: &ImageCache, posters: &PosterRenderer, t: Theme) -> CardAreas {
     let RowStyle { focused, spinner } = style;
     let border_style = Style::default().fg(if focused { t.border_focus } else { t.border });
     let title_style = if focused { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_dim) };
@@ -84,20 +87,21 @@ pub fn render(f: &mut Frame, state: &CarouselState, area: Rect, style: RowStyle,
         .padding(Padding::horizontal(1));
     let inner = block.inner(area);
     f.render_widget(block, area);
+    let mut cards = CardAreas::new();
     if inner.width == 0 || inner.height == 0 {
-        return;
+        return cards;
     }
     if state.items.is_empty() {
         let msg = if state.loading { format!("{spinner} loading…") } else { "nothing here yet".to_string() };
         let p = Paragraph::new(Span::styled(msg, Style::default().fg(t.text_muted).add_modifier(Modifier::ITALIC))).centered();
         f.render_widget(p, Rect { y: inner.y + inner.height / 2, height: 1, ..inner });
-        return;
+        return cards;
     }
 
     // leave the last row for the scrollbar; cards grow with the row so posters keep their shape
     let card_h = inner.height.saturating_sub(1).min(20);
     if card_h < 3 {
-        return;
+        return cards;
     }
     // as many cards as fit at their natural width, then stretched to fill the row evenly
     let avail = inner.width.saturating_sub(4); // 2 columns each side for the ‹ › arrows
@@ -123,12 +127,15 @@ pub fn render(f: &mut Frame, state: &CarouselState, area: Rect, style: RowStyle,
             break;
         }
         let selected = offset + idx == state.selected && focused;
-        render_card(f, anime, Rect { x, y: inner.y, width: card_w, height: card_h }, selected, cache, posters, t);
+        let card = Rect { x, y: inner.y, width: card_w, height: card_h };
+        render_card(f, anime, card, selected, cache, posters, t);
+        cards.push((card, offset + idx));
     }
     if state.items.len() > visible {
         let bar = Rect { x: inner.x + 2, y: inner.y + inner.height - 1, width: inner.width.saturating_sub(4), height: 1 };
         ThemedScrollbar { total: state.items.len(), visible, offset, focused }.render(f, bar, t);
     }
+    cards
 }
 
 fn render_card(f: &mut Frame, anime: &Anime, area: Rect, selected: bool, cache: &ImageCache, posters: &PosterRenderer, t: Theme) {

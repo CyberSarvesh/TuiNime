@@ -20,6 +20,7 @@ use crate::frontend::theme::Theme;
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let t = app.theme;
+    app.hits.take(); // clickable areas are rebuilt every frame
     f.render_widget(Block::default().style(Style::default().bg(t.bg)), area);
     if area.height < 3 {
         return;
@@ -449,5 +450,71 @@ mod screen_tests {
         assert_eq!(b.theme.kind, a.theme.kind);
         assert_eq!(b.recent_searches, vec!["frieren".to_string()]);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    use crate::frontend::state::HitTarget;
+
+    /// Left-click the middle of the area recorded for `target` in the last frame.
+    async fn click(a: &mut crate::frontend::app::App, target: HitTarget) {
+        let hits = a.hits.take();
+        let rect = hits.iter().find(|(_, t)| *t == target).map(|(r, _)| *r).unwrap_or_else(|| panic!("{target:?} not on screen"));
+        a.hits.set(hits);
+        let ev = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: rect.x + rect.width / 2,
+            row: rect.y + rect.height / 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        a.on_mouse(ev).await;
+    }
+
+    #[tokio::test]
+    async fn clicking_selects_then_opens() {
+        let mut a = loaded_app().await;
+        draw(&a, 140, 42);
+        let card = HitTarget::Card { row: crate::frontend::app::ROW_SEASON, index: 2 };
+        click(&mut a, card).await;
+        assert_eq!(a.active_carousel, crate::frontend::app::ROW_SEASON);
+        assert_eq!(a.carousels[crate::frontend::app::ROW_SEASON].selected, 2);
+        assert_eq!(a.view, AppView::Browse, "first click only selects");
+        draw(&a, 140, 42);
+        click(&mut a, card).await;
+        assert_eq!(a.view, AppView::Detail);
+        assert_eq!(a.detail.as_ref().unwrap().anime.title, "Season Pick 2");
+
+        let id = a.detail.as_ref().unwrap().anime.id.clone();
+        a.on_background(BgEvent::Episodes { anime_id: id, dub: false, result: Ok(episodes(24)) }).await;
+        draw(&a, 140, 42);
+        click(&mut a, HitTarget::Episode(7)).await;
+        assert_eq!(a.detail.as_ref().unwrap().selected, 7);
+        assert!(draw(&a, 140, 42).contains("▶ episode 8"));
+        click(&mut a, HitTarget::Episode(7)).await; // second click plays it
+        assert!(a.status.text.contains("looking up streams for Season Pick 2 episode 8"));
+    }
+
+    #[tokio::test]
+    async fn clicking_search_results_and_ignoring_clicks_under_help() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Char('/'))).await;
+        type_text(&mut a, "pick").await;
+        fire_debounce(&mut a).await;
+        let seq = a.search.seq;
+        a.on_background(BgEvent::Search { seq, query: "pick".into(), result: Ok((0..5).map(|i| rich(&format!("Pick {i}"), i)).collect()) }).await;
+        draw(&a, 100, 30);
+        click(&mut a, HitTarget::SearchResult(3)).await;
+        assert_eq!(a.search.selected, 3);
+        draw(&a, 100, 30);
+        click(&mut a, HitTarget::SearchResult(3)).await;
+        assert_eq!(a.view, AppView::Detail);
+        assert_eq!(a.detail.as_ref().unwrap().anime.title, "Pick 3");
+
+        a.on_key(key(KeyCode::Char('?'))).await;
+        draw(&a, 100, 30);
+        let before = a.detail.as_ref().unwrap().selected;
+        let ev = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollDown, column: 50, row: 15, modifiers: KeyModifiers::NONE,
+        };
+        a.on_mouse(ev).await;
+        assert_eq!(a.detail.as_ref().unwrap().selected, before, "mouse is ignored while help is open");
     }
 }

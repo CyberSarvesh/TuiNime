@@ -39,7 +39,8 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ("F1", "this help"),
     ]),
     ("anywhere", &[
-        ("mouse wheel", "scroll rows"),
+        ("mouse", "click selects, click again opens/plays"),
+        ("mouse wheel", "scroll the list"),
         ("?", "this help"),
         ("ctrl+c", "quit"),
     ]),
