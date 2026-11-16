@@ -223,6 +223,7 @@ mod screen_tests {
     fn episodes(n: u32) -> EpisodeList {
         EpisodeList {
             provider: 0,
+            source: "hianime.at",
             show: "Trending Show Zero (romaji)".into(),
             episodes: (1..=n)
                 .map(|i| Episode { id: format!("x:{i}"), number: i, label: i.to_string(), title: None, thumbnail: None })
@@ -257,7 +258,7 @@ mod screen_tests {
         show("details with 30 episodes (120x36)", &s);
         assert!(s.contains("episodes · sub · 30"));
         assert!(s.contains("▶ episode 1"));
-        assert!(s.contains("listed as Trending Show Zero (romaji)"));
+        assert!(s.contains("from hianime.at as Trending Show Zero (romaji)"));
         assert!(s.contains("⏎ play"));
 
         a.on_key(key(KeyCode::Right)).await;

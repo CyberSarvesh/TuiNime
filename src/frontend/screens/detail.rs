@@ -99,7 +99,8 @@ fn render_description(f: &mut Frame, d: &DetailState, area: Rect, t: Theme) {
 /// " listed as Sousou no Frieren " when the provider's name differs from AniList's.
 fn listed_as(d: &DetailState) -> String {
     match &d.episodes {
-        Episodes::Loaded(list) if !list.show.eq_ignore_ascii_case(&d.anime.title) => format!(" listed as {} ", list.show),
+        Episodes::Loaded(list) if !list.show.eq_ignore_ascii_case(&d.anime.title) => format!(" from {} as {} ", list.source, list.show),
+        Episodes::Loaded(list) => format!(" from {} ", list.source),
         _ => String::new(),
     }
 }

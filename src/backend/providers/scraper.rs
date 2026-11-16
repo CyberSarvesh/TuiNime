@@ -67,6 +67,10 @@ impl ScraperProvider {
 
 #[async_trait]
 impl AnimeProvider for ScraperProvider {
+    fn name(&self) -> &'static str {
+        "Consumet"
+    }
+
     async fn search(&self, query: &str, limit: u8) -> Result<Vec<Anime>> {
         let url = format!(
             "{}/anime/gogoanime/{}",

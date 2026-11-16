@@ -62,75 +62,137 @@ where
         }
     }
 
-    /// ani-cli style: search each provider by title → pick the best-matching show →
-    /// its episode list. The first provider that yields episodes wins.
-    ///
-    /// AniList ids mean nothing to stream providers, so we only search by name. The English
-    /// title is tried first, then the alternate (romaji/native) titles, because providers
-    /// like AllAnime usually list shows under romaji.
-    pub async fn episodes_for(&self, anime: &Anime) -> Result<EpisodeList> {
+    /// The names to search a show by: its title first, then alternate (romaji/native)
+    /// titles, since providers like AllAnime list shows under romaji.
+    fn names(anime: &Anime) -> Vec<&str> {
         let mut names: Vec<&str> = vec![anime.title.as_str()];
         names.extend(anime.alt_titles.iter().map(String::as_str));
         names.dedup();
-
-        let mut last_err: Option<anyhow::Error> = None;
-        for (index, provider) in self.stream_providers.iter().enumerate() {
-            let mut chosen: Option<Anime> = None;
-            let mut first_hit: Option<Anime> = None;
-            for query in &names {
-                match provider.search(query, 8).await {
-                    Ok(results) => {
-                        if first_hit.is_none() {
-                            first_hit = results.iter().find(|r| r.episodes != Some(0)).cloned();
-                        }
-                        if let Some(best) = best_match(&names, &results) {
-                            chosen = Some(best.clone());
-                            break;
-                        }
-                    }
-                    Err(e) => last_err = Some(e),
-                }
-            }
-            let Some(show) = chosen.or(first_hit) else { continue };
-            match provider.episodes(&show.id).await {
-                Ok(episodes) if !episodes.is_empty() => {
-                    return Ok(EpisodeList { provider: index, show: show.title, episodes });
-                }
-                Ok(_) => last_err = Some(anyhow::anyhow!("no episodes listed for {}", show.title)),
-                Err(e) => last_err = Some(e),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no stream provider has {}", anime.title)))
+        names
     }
 
-    /// Stream links for one episode from the provider that listed it.
-    pub async fn streams_for(&self, provider: usize, episode_id: &str) -> Result<Vec<StreamSource>> {
-        let p = self
-            .stream_providers
-            .get(provider)
-            .ok_or_else(|| anyhow::anyhow!("stream provider {provider} is not available"))?;
-        let sources = p.streams(episode_id).await?;
-        if sources.is_empty() {
-            anyhow::bail!("no playable links for this episode");
+    /// Find `anime` on one provider and list its episodes.
+    ///
+    /// AniList ids mean nothing to stream providers, so this searches by name and picks the
+    /// best-matching result (falling back to the first non-empty one).
+    async fn episodes_on(&self, index: usize, anime: &Anime) -> Result<EpisodeList> {
+        let provider = &self.stream_providers[index];
+        let names = Self::names(anime);
+        let mut chosen: Option<Anime> = None;
+        let mut first_hit: Option<Anime> = None;
+        let mut search_err = None;
+        for query in &names {
+            match provider.search(query, 8).await {
+                Ok(results) => {
+                    if first_hit.is_none() {
+                        first_hit = results.iter().find(|r| r.episodes != Some(0)).cloned();
+                    }
+                    if let Some(best) = best_match(&names, &results) {
+                        chosen = Some(best.clone());
+                        break;
+                    }
+                }
+                Err(e) => search_err = Some(e),
+            }
         }
-        Ok(sources)
+        let Some(show) = chosen.or(first_hit) else {
+            return Err(search_err.unwrap_or_else(|| anyhow::anyhow!("doesn't list {}", anime.title)));
+        };
+        let episodes = provider.episodes(&show.id).await?;
+        if episodes.is_empty() {
+            anyhow::bail!("lists no episodes for {}", show.title);
+        }
+        Ok(EpisodeList { provider: index, source: provider.name(), show: show.title, episodes })
+    }
+
+    /// ani-cli style: the first provider (in order) that can list the show's episodes wins.
+    pub async fn episodes_for(&self, anime: &Anime) -> Result<EpisodeList> {
+        let mut failures = Vec::new();
+        for index in 0..self.stream_providers.len() {
+            match self.episodes_on(index, anime).await {
+                Ok(list) => return Ok(list),
+                Err(e) => failures.push(format!("{}: {e:#}", self.stream_providers[index].name())),
+            }
+        }
+        Err(all_failed(&format!("no source has episodes for {}", anime.title), failures))
+    }
+
+    /// Stream links for `episode` of `anime`, which `provider` listed.
+    ///
+    /// If that provider can't produce links (blocked, broken, no server), each other provider
+    /// is tried in order: find the same show there, find the episode with the same label,
+    /// and ask for its links. Reports which source the links came from.
+    pub async fn streams_with_fallback(&self, anime: &Anime, provider: usize, episode: &Episode) -> Result<Streams> {
+        let mut failures = Vec::new();
+        let order = std::iter::once(provider).chain((0..self.stream_providers.len()).filter(|&i| i != provider));
+        for index in order {
+            let Some(p) = self.stream_providers.get(index) else { continue };
+            let attempt = async {
+                let episode_id = if index == provider {
+                    episode.id.clone()
+                } else {
+                    let list = self.episodes_on(index, anime).await?;
+                    list.episodes
+                        .iter()
+                        .find(|e| e.label == episode.label)
+                        .map(|e| e.id.clone())
+                        .ok_or_else(|| anyhow::anyhow!("has no episode {}", episode.label))?
+                };
+                let sources = p.streams(&episode_id).await?;
+                if sources.is_empty() {
+                    anyhow::bail!("gave no playable links");
+                }
+                Ok::<_, anyhow::Error>(sources)
+            };
+            match attempt.await {
+                Ok(sources) => {
+                    let tried: Vec<&'static str> = failures.iter().map(|(name, _)| *name).collect();
+                    return Ok(Streams { sources, source: p.name(), failed: tried });
+                }
+                Err(e) => failures.push((p.name(), format!("{e:#}"))),
+            }
+        }
+        let lines = failures.into_iter().map(|(name, e)| format!("{name}: {e}")).collect();
+        Err(all_failed(&format!("no source could play {} episode {}", anime.title, episode.label), lines))
     }
 
     /// Streams for episode 1 — what `p` plays straight from browse.
-    pub async fn resolve_for_anime(&self, anime: &Anime) -> Result<Vec<StreamSource>> {
+    pub async fn resolve_for_anime(&self, anime: &Anime) -> Result<Streams> {
         let list = self.episodes_for(anime).await?;
-        self.streams_for(list.provider, &list.episodes[0].id).await
+        self.streams_with_fallback(anime, list.provider, &list.episodes[0]).await
+    }
+}
+
+/// One error that names every source and why it failed.
+fn all_failed(summary: &str, failures: Vec<String>) -> anyhow::Error {
+    if failures.is_empty() {
+        anyhow::anyhow!("{summary} (no stream sources are enabled)")
+    } else {
+        anyhow::anyhow!("{summary} — {}", failures.join("; "))
     }
 }
 
 /// A show's episodes as listed by one stream provider.
 #[derive(Debug, Clone)]
 pub struct EpisodeList {
-    /// Index of the provider that listed them (pass back to `streams_for`).
+    /// Index of the provider that listed them (pass back to `streams_with_fallback`).
     pub provider: usize,
+    /// That provider's name, e.g. "hianime.at".
+    pub source: &'static str,
     /// The provider's name for the show (may differ from the AniList title).
     pub show: String,
     pub episodes: Vec<Episode>,
+}
+
+/// Playable links and where they came from.
+#[derive(Debug, Clone)]
+pub struct Streams {
+    /// Best quality first.
+    pub sources: Vec<StreamSource>,
+    /// Provider that produced them.
+    pub source: &'static str,
+    /// Providers tried first that couldn't (empty when the first choice worked).
+    pub failed: Vec<&'static str>,
 }
 
 /// Lowercase, keep only letters/digits, collapse everything else to single spaces.
@@ -180,6 +242,98 @@ pub(crate) fn best_match<'a>(names: &[&str], candidates: &'a [Anime]) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+
+    /// A stream source that lists one show, numbering its episodes by `labels`,
+    /// and either gives a link or fails with `stream_err`.
+    struct Fake {
+        name: &'static str,
+        show: &'static str,
+        labels: Vec<&'static str>,
+        stream_err: Option<&'static str>,
+    }
+
+    #[async_trait]
+    impl AnimeProvider for Fake {
+        fn name(&self) -> &'static str { self.name }
+        async fn search(&self, _q: &str, _l: u8) -> Result<Vec<Anime>> {
+            Ok(vec![show(self.show, 12)])
+        }
+        async fn episodes(&self, _id: &str) -> Result<Vec<Episode>> {
+            Ok(self.labels.iter().map(|l| Episode {
+                id: format!("{}:{l}", self.name), number: 0, label: l.to_string(), title: None, thumbnail: None,
+            }).collect())
+        }
+        async fn streams(&self, episode_id: &str) -> Result<Vec<StreamSource>> {
+            match self.stream_err {
+                Some(e) => anyhow::bail!("{e}"),
+                None => Ok(vec![StreamSource { url: format!("https://{episode_id}"), quality: None, headers: None, is_m3u8: true, subtitles: vec![] }]),
+            }
+        }
+    }
+
+    struct NoMeta;
+    #[async_trait]
+    impl MetadataProvider for NoMeta {
+        async fn trending(&self, _l: u8) -> Result<Vec<Anime>> { Ok(vec![]) }
+        async fn seasonal(&self, _y: u16, _s: &str, _l: u8) -> Result<Vec<Anime>> { Ok(vec![]) }
+        async fn search(&self, _q: &str, _l: u8) -> Result<Vec<Anime>> { Ok(vec![]) }
+    }
+
+    fn agg(providers: Vec<Fake>) -> ProviderAggregator<NoMeta> {
+        let mut a = ProviderAggregator::new(NoMeta);
+        for p in providers {
+            a.add_provider(p);
+        }
+        a
+    }
+
+    fn fake(name: &'static str, labels: &[&'static str], stream_err: Option<&'static str>) -> Fake {
+        Fake { name, show: "Frieren", labels: labels.to_vec(), stream_err }
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_the_same_episode_on_the_next_source() {
+        let a = agg(vec![
+            fake("first", &["1", "2", "3"], Some("NEED_CAPTCHA")),
+            fake("second", &["1", "2", "3"], None),
+        ]);
+        let target = show("Frieren", 3);
+        let list = a.episodes_for(&target).await.unwrap();
+        assert_eq!(list.source, "first");
+        let s = a.streams_with_fallback(&target, list.provider, &list.episodes[1]).await.unwrap();
+        assert_eq!(s.source, "second");
+        assert_eq!(s.failed, ["first"]);
+        assert_eq!(s.sources[0].url, "https://second:2", "same episode label on the other source");
+    }
+
+    #[tokio::test]
+    async fn first_choice_working_reports_no_failures() {
+        let a = agg(vec![fake("first", &["1"], None), fake("second", &["1"], None)]);
+        let s = a.resolve_for_anime(&show("Frieren", 1)).await.unwrap();
+        assert_eq!((s.source, s.failed.len()), ("first", 0));
+    }
+
+    #[tokio::test]
+    async fn skips_a_source_missing_that_episode_and_explains_total_failure() {
+        let a = agg(vec![
+            fake("first", &["1", "2"], Some("blocked")),
+            fake("second", &["1"], None), // has no episode 2
+            fake("third", &["1", "2"], Some("down")),
+        ]);
+        let target = show("Frieren", 2);
+        let list = a.episodes_for(&target).await.unwrap();
+        let err = a.streams_with_fallback(&target, list.provider, &list.episodes[1]).await.unwrap_err().to_string();
+        assert!(err.contains("no source could play Frieren episode 2"), "{err}");
+        assert!(err.contains("first: blocked") && err.contains("second: has no episode 2") && err.contains("third: down"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn no_sources_enabled_is_explained() {
+        let a = agg(vec![]);
+        let err = a.episodes_for(&show("Frieren", 1)).await.unwrap_err().to_string();
+        assert!(err.contains("no stream sources are enabled"), "{err}");
+    }
 
     fn show(title: &str, eps: u32) -> Anime {
         Anime {
@@ -236,5 +390,26 @@ mod live {
         agg.set_dub(true);
         let dub = agg.episodes_for(&anime).await.expect("dub episodes");
         println!("dub: {} episodes", dub.episodes.len());
+    }
+
+    #[tokio::test]
+    #[ignore = "network"]
+    async fn allanime_captcha_falls_back_to_hianime() {
+        use crate::backend::HiAnimeProvider;
+        // AllAnime first on purpose: it lists episodes but refuses links
+        let mut agg = ProviderAggregator::new(AniListClient::new());
+        agg.add_provider(AllAnimeProvider::new());
+        agg.add_provider(HiAnimeProvider::new());
+        let anime = Anime {
+            id: "154587".into(), title: "Frieren: Beyond Journey's End".into(), description: None,
+            cover_image: None, banner_image: None, score: None, year: None, episodes: Some(28),
+            status: None, genres: vec![], alt_titles: vec!["Sousou no Frieren".into()],
+        };
+        let list = agg.episodes_for(&anime).await.expect("episodes");
+        println!("episodes from {} as {:?}", list.source, list.show);
+        let ep = &list.episodes[4];
+        let s = agg.streams_with_fallback(&anime, list.provider, ep).await.expect("some source plays it");
+        println!("episode {} → {} (failed: {:?}), best {:?} {}", ep.label, s.source, s.failed, s.sources[0].quality, s.sources[0].url);
+        assert_eq!(s.source, "hianime.at");
     }
 }

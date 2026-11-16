@@ -79,6 +79,10 @@ impl Default for HiAnimeProvider {
 
 #[async_trait]
 impl AnimeProvider for HiAnimeProvider {
+    fn name(&self) -> &'static str {
+        "hianime.at"
+    }
+
     async fn search(&self, query: &str, limit: u8) -> Result<Vec<Anime>> {
         let url = format!("{BASE}/search?keyword={}", urlencode(query));
         Ok(parse_search(&self.get_text(&url, None).await?, limit as usize))

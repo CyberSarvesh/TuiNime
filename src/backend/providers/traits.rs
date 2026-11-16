@@ -47,6 +47,8 @@ pub struct StreamSource {
 /// Provider that can search and resolve streams.
 #[async_trait]
 pub trait AnimeProvider: Send + Sync {
+    /// Short name shown to the user, e.g. "hianime.at".
+    fn name(&self) -> &'static str;
     async fn search(&self, query: &str, limit: u8) -> Result<Vec<Anime>>;
     async fn episodes(&self, anime_id: &str) -> Result<Vec<Episode>>;
     async fn streams(&self, episode_id: &str) -> Result<Vec<StreamSource>>;

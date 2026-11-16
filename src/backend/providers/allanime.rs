@@ -79,6 +79,10 @@ pub(crate) fn quality_rank(q: Option<&str>) -> u32 {
 
 #[async_trait]
 impl AnimeProvider for AllAnimeProvider {
+    fn name(&self) -> &'static str {
+        "AllAnime"
+    }
+
     async fn search(&self, query: &str, limit: u8) -> Result<Vec<Anime>> {
         let search_gql = r#"query($search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType){shows(search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin){edges{_id name availableEpisodes __typename}}}"#;
         let vars = json!({

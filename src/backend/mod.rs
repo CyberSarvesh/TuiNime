@@ -5,8 +5,8 @@ pub mod providers;
 
 pub use cache::ImageCache;
 pub use player::MpvPlayer;
-pub use providers::traits::{Anime, Episode, StreamSource};
-pub use providers::aggregator::{EpisodeList, ProviderAggregator};
+pub use providers::traits::{Anime, Episode};
+pub use providers::aggregator::{EpisodeList, ProviderAggregator, Streams};
 pub use providers::anilist::AniListClient;
 pub use providers::allanime::AllAnimeProvider;
 pub use providers::hianime::HiAnimeProvider;
@@ -85,7 +85,7 @@ impl Catalog {
         Ok(res)
     }
 
-    pub async fn resolve(&self, anime: &Anime) -> Result<Vec<StreamSource>> {
+    pub async fn resolve(&self, anime: &Anime) -> Result<Streams> {
         self.aggregator.resolve_for_anime(anime).await
     }
 
@@ -93,8 +93,9 @@ impl Catalog {
         self.aggregator.episodes_for(anime).await
     }
 
-    pub async fn streams(&self, provider: usize, episode_id: &str) -> Result<Vec<StreamSource>> {
-        self.aggregator.streams_for(provider, episode_id).await
+    /// Links for `episode`, trying other sources if `provider` (which listed it) can't.
+    pub async fn streams(&self, anime: &Anime, provider: usize, episode: &Episode) -> Result<Streams> {
+        self.aggregator.streams_with_fallback(anime, provider, episode).await
     }
 
     /// Subtitled (`false`) or dubbed (`true`) listings from now on.

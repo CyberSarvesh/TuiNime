@@ -5,7 +5,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::backend::{Anime, Catalog, EpisodeList, Episode, StreamSource};
+use crate::backend::{Anime, Catalog, Episode, EpisodeList, Streams};
 
 /// Results delivered from background tasks to `App::on_background`.
 pub enum BgEvent {
@@ -14,7 +14,7 @@ pub enum BgEvent {
     Search { seq: u64, query: String, result: Result<Vec<Anime>, String> },
     Episodes { anime_id: String, dub: bool, result: Result<EpisodeList, String> },
     /// Streams for `anime` (and which episode, when one was picked) are ready to play.
-    Resolved { anime: Anime, episode: Option<String>, result: Result<Vec<StreamSource>, String> },
+    Resolved { anime: Anime, episode: Option<String>, result: Result<Streams, String> },
 }
 
 pub fn spawn_trending(catalog: Catalog, tx: UnboundedSender<BgEvent>) {
@@ -59,7 +59,7 @@ pub fn spawn_episodes(catalog: Catalog, tx: UnboundedSender<BgEvent>, anime: Ani
 /// Streams for one chosen episode.
 pub fn spawn_play_episode(catalog: Catalog, tx: UnboundedSender<BgEvent>, anime: Anime, provider: usize, episode: Episode) {
     tokio::spawn(async move {
-        let result = catalog.streams(provider, &episode.id).await.map_err(|e| format!("{e:#}"));
+        let result = catalog.streams(&anime, provider, &episode).await.map_err(|e| format!("{e:#}"));
         let _ = tx.send(BgEvent::Resolved { anime, episode: Some(episode.label), result });
     });
 }

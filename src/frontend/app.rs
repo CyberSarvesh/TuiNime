@@ -186,16 +186,19 @@ impl App {
                     None => anime.title.clone(),
                 };
                 match result {
-                    Ok(src) if !src.is_empty() => {
+                    Ok(streams) if !streams.sources.is_empty() => {
                         // sources arrive sorted best-quality first
-                        match self.backend.player_mut().play(&src[0], &title).await {
+                        match self.backend.player_mut().play(&streams.sources[0], &title).await {
                             Ok(()) => {
                                 if self.view != AppView::Player {
                                     self.player_return = self.view;
                                 }
                                 self.view = AppView::Player;
                                 self.now_playing = Some(title.clone());
-                                self.status = Status::info(format!("playing {title}"));
+                                self.status = Status::info(match streams.failed.as_slice() {
+                                    [] => format!("playing {title} · {}", streams.source),
+                                    failed => format!("playing {title} · {} ({} didn't work)", streams.source, failed.join(", ")),
+                                });
                                 self.add_continue_watching(anime);
                             }
                             Err(e) => self.status = Status::error(format!("mpv failed: {}", short(&format!("{e:#}")))),
