@@ -166,12 +166,7 @@ impl AnimeProvider for AllAnimeProvider {
 
         let v: serde_json::Value = resp.json().await?;
         if let Some(errors) = v.get("errors") {
-            if errors.to_string().contains("AA_CRYPTO_MISSING") {
-                anyhow::bail!(
-                    "AllAnime now requires a signed request token (AA_CRYPTO_MISSING); this provider needs updating to match current ani-cli"
-                );
-            }
-            anyhow::bail!("allanime episode errors: {errors}");
+            anyhow::bail!("{}", explain_errors(errors));
         }
         let source_urls = v.pointer("/data/episode/sourceUrls")
             .and_then(|x| x.as_array()).cloned().unwrap_or_default();
@@ -271,6 +266,23 @@ impl AllAnimeProvider {
     }
 }
 
+/// Turn AllAnime's GraphQL `errors` into one readable sentence.
+fn explain_errors(errors: &serde_json::Value) -> String {
+    let messages: Vec<&str> = errors
+        .as_array()
+        .map(|a| a.iter().filter_map(|e| e.get("message").and_then(|m| m.as_str())).collect())
+        .unwrap_or_default();
+    if messages.contains(&"NEED_CAPTCHA") {
+        "AllAnime wants a CAPTCHA solved before it gives out video links, so it can't play this right now".to_string()
+    } else if messages.contains(&"AA_CRYPTO_MISSING") {
+        "AllAnime now requires a signed request token it doesn't give to apps, so it can't play this right now".to_string()
+    } else if messages.is_empty() {
+        format!("AllAnime returned an error: {errors}")
+    } else {
+        format!("AllAnime returned an error: {}", messages.join(", "))
+    }
+}
+
 fn extract_json_field(s: &str, field: &str) -> Option<String> {
     let pat = format!("\"{}\":\"", field);
     let start = s.find(&pat)? + pat.len();
@@ -313,6 +325,16 @@ mod tests {
     fn decrypt_matches_ani_cli_table_samples() {
         // a few pairs straight from ani-cli's sed table
         assert_eq!(AllAnimeProvider::decrypt_hex("--01080517"), "90=/");
+    }
+
+    #[test]
+    fn errors_become_readable_sentences() {
+        let captcha = serde_json::json!([{"message": "NEED_CAPTCHA", "extensions": {"code": "INTERNAL_SERVER_ERROR"}}]);
+        assert!(explain_errors(&captcha).contains("CAPTCHA"));
+        let crypto = serde_json::json!([{"message": "AA_CRYPTO_MISSING"}]);
+        assert!(explain_errors(&crypto).contains("signed request token"));
+        let other = serde_json::json!([{"message": "boom"}]);
+        assert_eq!(explain_errors(&other), "AllAnime returned an error: boom");
     }
 
     #[test]
