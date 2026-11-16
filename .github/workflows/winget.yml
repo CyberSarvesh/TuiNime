@@ -1,18 +1,35 @@
-# Opens a pull request to microsoft/winget-pkgs for every published release.
+# Opens a pull request to microsoft/winget-pkgs for every release.
 # Only works after the first version is already in winget (see PUBLISHING.md),
 # and needs a WINGET_TOKEN secret: a classic GitHub token with the public_repo scope.
+#
+# Runs when the Release workflow finishes rather than on the "release published"
+# event: the release is created with GITHUB_TOKEN, and GitHub doesn't start other
+# workflows from events made with that token.
 name: Publish to winget
 
 on:
-  release:
-    types: [released]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to submit, e.g. v0.2.0"
+        required: true
 
 jobs:
   winget:
+    # only after a successful release from a version tag (head_branch is the tag name there)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: windows-latest
     steps:
       - uses: vedantmgoyal9/winget-releaser@v2
         with:
           identifier: CyberSarvesh.TuiNime
           installers-regex: '-pc-windows-msvc\.zip$'
+          release-tag: ${{ inputs.tag || github.event.workflow_run.head_branch }}
           token: ${{ secrets.WINGET_TOKEN }}
