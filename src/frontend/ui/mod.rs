@@ -39,6 +39,9 @@ pub fn render(f: &mut Frame, app: &App) {
     if app.view == AppView::Player {
         screens::player::render(f, app, body, t);
     }
+    if app.show_help {
+        screens::help::render(f, body, t);
+    }
     render_footer(f, app, footer, t);
 }
 
@@ -66,10 +69,10 @@ fn view_name(v: AppView) -> &'static str {
 /// Key hints for the footer, per screen.
 pub fn hints(v: AppView) -> &'static str {
     match v {
-        AppView::Browse => "←→ move  ↑↓ rows  ⏎ details  p play  / search  t theme  q quit",
-        AppView::Detail => "←↑↓→ episode  ⏎ play  s sub/dub  [ ] scroll text  esc back",
-        AppView::Search => "type to search  ↑↓ pick  ⏎ open  esc clear/back",
-        AppView::Player => "esc stop",
+        AppView::Browse => "←→ move  ↑↓ rows  ⏎ details  p play  / search  ? help  q quit",
+        AppView::Detail => "←↑↓→ episode  ⏎ play  s sub/dub  [ ] scroll text  ? help  esc back",
+        AppView::Search => "type to search  ↑↓ pick  ⏎ open  esc clear/back  F1 help",
+        AppView::Player => "esc stop  ? help",
     }
 }
 
@@ -85,7 +88,7 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect, t: Theme) {
         Span::styled(format!(" {icon} "), Style::default().fg(color).add_modifier(Modifier::BOLD)),
         Span::styled(app.status.text.clone(), Style::default().fg(text_color)),
     ]);
-    let hint = hints(app.view);
+    let hint = if app.show_help { "esc close" } else { hints(app.view) };
     let hint_w = hint.chars().count() as u16 + 1;
     let status_w = status.width() as u16;
     // hints only when they fit next to the status; the status always wins
@@ -403,6 +406,29 @@ mod screen_tests {
             for h in [1, 3, 4, 5, 8, 20, 60] {
                 draw(&a, w, h);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn help_popup_opens_and_blocks_other_keys() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Char('?'))).await;
+        assert!(a.show_help);
+        let s = draw(&a, 100, 44);
+        show("help popup (100x44)", &s);
+        assert!(s.contains("keys") && s.contains("switch sub ↔ dub") && s.contains("esc or ? to close"));
+        a.on_key(key(KeyCode::Char('q'))).await; // closes help, does not quit
+        assert!(!a.show_help && a.running);
+
+        // on the search screen `?` is typed; F1 opens help
+        a.on_key(key(KeyCode::Char('/'))).await;
+        a.on_key(key(KeyCode::Char('?'))).await;
+        assert_eq!(a.search.query, "?");
+        assert!(!a.show_help);
+        a.on_key(key(KeyCode::F(1))).await;
+        assert!(a.show_help);
+        for (w, h) in [(10, 5), (40, 12), (66, 30)] {
+            draw(&a, w, h);
         }
     }
 }

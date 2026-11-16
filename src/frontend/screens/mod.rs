@@ -3,5 +3,6 @@
 
 pub mod browse;
 pub mod detail;
+pub mod help;
 pub mod player;
 pub mod search;

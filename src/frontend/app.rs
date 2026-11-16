@@ -40,6 +40,8 @@ pub struct App {
     pub dub: bool,
     /// Screen to return to when playback stops.
     pub player_return: AppView,
+    /// The key-help popup is open (it takes all keys until closed).
+    pub show_help: bool,
     /// Show whose streams are being looked up, so repeated `p` presses don't stack requests.
     resolving: Option<String>,
     /// Screen to return to when leaving details (browse or search).
@@ -65,7 +67,7 @@ impl App {
             search: SearchState::default(), recent_searches: Vec::new(),
             status: Status::info("welcome"), tick: 0,
             backend, theme: Theme::cozy(), posters, now_playing: None,
-            detail: None, dub: false, player_return: AppView::Browse,
+            detail: None, dub: false, player_return: AppView::Browse, show_help: false,
             resolving: None, detail_return: AppView::Browse, bg_tx, bg_rx,
         }
     }
@@ -185,6 +187,18 @@ impl App {
     pub async fn on_key(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.running = false;
+            return;
+        }
+        if self.show_help {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::F(1) | KeyCode::Enter) {
+                self.show_help = false;
+            }
+            return;
+        }
+        // `?` is a letter on the search screen, so F1 opens help there
+        let help_key = key.code == KeyCode::F(1) || (key.code == KeyCode::Char('?') && self.view != AppView::Search);
+        if help_key {
+            self.show_help = true;
             return;
         }
         match self.view {
