@@ -73,9 +73,21 @@ fn is_ctrl_c(key: &crossterm::event::KeyEvent) -> bool {
     )
 }
 
+/// Log to a file, never to the terminal: stderr shares the screen with the TUI, so any
+/// warning printed there would scribble over the interface.
+/// Location: `<cache dir>/tuinime/tuinime.log` (set `RUST_LOG=debug` for more detail).
 fn init_logging() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-    let _ = fmt().with_env_filter(filter).with_writer(std::io::stderr).try_init();
+    let dir = dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("tuinime");
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("tuinime.log")) else {
+        return; // no log file available — stay silent rather than corrupt the screen
+    };
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
+        .try_init();
 }
 
 async fn run_app<B>(terminal: &mut Terminal<B>, app: &mut App, events: &mut EventHandler) -> Result<()>
