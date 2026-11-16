@@ -38,6 +38,9 @@ async fn main() -> Result<()> {
     let picker = ratatui_image::picker::Picker::from_query_stdio()
         .unwrap_or_else(|_| ratatui_image::picker::Picker::from_fontsize((8, 16)));
     let mut app = App::new(frontend::widgets::poster::PosterRenderer::new(picker));
+    if let Some(path) = frontend::persist::default_path() {
+        app.restore(path);
+    }
     let mut events = EventHandler::new(120);
     app.spawn_initial_fetch();
 

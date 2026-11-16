@@ -2,6 +2,7 @@
 pub mod app;
 pub mod event;
 pub mod layout;
+pub mod persist;
 pub mod screens;
 pub mod services;
 pub mod state;

@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::backend::{Anime, MiruBackend};
+use crate::frontend::persist::{self, Saved};
 use crate::frontend::services::{self, BgEvent};
 use crate::frontend::theme::Theme;
 use crate::frontend::ui::carousel::CarouselState;
@@ -46,6 +47,8 @@ pub struct App {
     resolving: Option<String>,
     /// Screen to return to when leaving details (browse or search).
     detail_return: AppView,
+    /// Where settings and history are saved; `None` (as in tests) means don't save.
+    state_path: Option<std::path::PathBuf>,
     bg_tx: UnboundedSender<BgEvent>,
     bg_rx: UnboundedReceiver<BgEvent>,
 }
@@ -68,7 +71,34 @@ impl App {
             status: Status::info("welcome"), tick: 0,
             backend, theme: Theme::cozy(), posters, now_playing: None,
             detail: None, dub: false, player_return: AppView::Browse, show_help: false,
-            resolving: None, detail_return: AppView::Browse, bg_tx, bg_rx,
+            resolving: None, detail_return: AppView::Browse, state_path: None, bg_tx, bg_rx,
+        }
+    }
+
+    /// Load saved settings/history from `path` and save there from now on.
+    pub fn restore(&mut self, path: std::path::PathBuf) {
+        let saved = persist::load(&path);
+        self.theme = Theme::from_kind(saved.theme);
+        self.dub = saved.dub;
+        self.backend.catalog().set_dub(saved.dub);
+        self.recent_searches = saved.recent_searches;
+        if let Some(row) = self.carousels.get_mut(ROW_CONTINUE) {
+            row.set_items(saved.continue_watching);
+        }
+        self.state_path = Some(path);
+    }
+
+    /// Save settings/history (best effort — a failure is logged, never shown as a crash).
+    fn save_state(&self) {
+        let Some(path) = &self.state_path else { return };
+        let saved = Saved {
+            theme: self.theme.kind,
+            dub: self.dub,
+            recent_searches: self.recent_searches.clone(),
+            continue_watching: self.carousels.get(ROW_CONTINUE).map(|r| r.items.clone()).unwrap_or_default(),
+        };
+        if let Err(e) = persist::save(path, &saved) {
+            tracing::warn!("couldn't save state: {e:#}");
         }
     }
 
@@ -78,6 +108,7 @@ impl App {
         let next = kinds[(i + 1) % kinds.len()];
         self.theme = Theme::from_kind(next);
         self.status = Status::info(format!("theme → {}", self.theme.name()));
+        self.save_state();
     }
 
     pub fn spawn_initial_fetch(&mut self) {
@@ -180,8 +211,10 @@ impl App {
             let mut items = std::mem::take(&mut row.items);
             items.retain(|a| a.id != anime.id);
             items.insert(0, anime);
+            items.truncate(persist::MAX_CONTINUE);
             row.set_items(items);
         }
+        self.save_state();
     }
 
     pub async fn on_key(&mut self, key: KeyEvent) {
@@ -252,6 +285,7 @@ impl App {
                 self.backend.catalog().set_dub(self.dub);
                 self.status = Status::busy(format!("switched to {} — loading episodes…", if self.dub { "dub" } else { "sub" }));
                 self.reload_episodes();
+                self.save_state();
             }
             KeyCode::Char('r') if matches!(d.episodes, Episodes::Failed(_)) => self.reload_episodes(),
             KeyCode::Enter | KeyCode::Char('p') => self.play_detail_episode(),
@@ -335,6 +369,7 @@ impl App {
             SearchResults::Loaded(r) if !r.is_empty() && self.search.sent == self.search.query.trim() => {
                 let Some(anime) = r.get(self.search.selected).cloned() else { return };
                 remember_search(&mut self.recent_searches, &self.search.query);
+                self.save_state();
                 self.open_detail(anime);
             }
             SearchResults::Idle if self.search.query.trim().is_empty() => {

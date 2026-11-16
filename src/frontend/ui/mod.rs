@@ -431,4 +431,23 @@ mod screen_tests {
             draw(&a, w, h);
         }
     }
+
+    #[tokio::test]
+    async fn settings_and_history_survive_a_restart() {
+        let path = std::env::temp_dir().join(format!("tuinime-test-{}", uuid::Uuid::new_v4())).join("state.json");
+        let mut a = detail_app(3).await;
+        a.restore(path.clone()); // nothing saved yet → defaults
+        a.on_key(key(KeyCode::Char('s'))).await; // dub on (saves)
+        a.on_key(key(KeyCode::Esc)).await;
+        a.on_key(key(KeyCode::Char('t'))).await; // next theme (saves)
+        a.recent_searches = vec!["frieren".into()];
+        a.on_key(key(KeyCode::Char('t'))).await;
+
+        let mut b = app();
+        b.restore(path.clone());
+        assert!(b.dub);
+        assert_eq!(b.theme.kind, a.theme.kind);
+        assert_eq!(b.recent_searches, vec!["frieren".to_string()]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
 }
