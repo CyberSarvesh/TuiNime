@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 pub enum Event {
     Key(KeyEvent),
     Mouse(MouseEvent),
-    Resize(u16, u16),
+    Resize,
     Tick,
 }
 
@@ -38,7 +38,7 @@ impl EventHandler {
                             Some(Ok(ev)) => {
                                 let app_event = match ev {
                                     CrosstermEvent::Key(k) => Some(Event::Key(k)),
-                                    CrosstermEvent::Resize(w, h) => Some(Event::Resize(w, h)),
+                                    CrosstermEvent::Resize(..) => Some(Event::Resize),
                                     CrosstermEvent::FocusGained | CrosstermEvent::FocusLost | CrosstermEvent::Paste(_) => None,
                                     CrosstermEvent::Mouse(m) => {
                                         // ignore useless Move/Drag flood — only clicks/scroll matter

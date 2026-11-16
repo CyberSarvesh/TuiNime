@@ -25,13 +25,6 @@ impl ScraperProvider {
         }
     }
 
-    pub fn with_base(base: impl Into<String>) -> Self {
-        Self {
-            client: super::http_client("tuinime/0.1"),
-            consumet_base: base.into(),
-        }
-    }
-
     /// Example HTML fallback: parse a gogoanime-style search page.
     #[allow(dead_code)]
     fn parse_search_html(html: &str) -> Vec<Anime> {

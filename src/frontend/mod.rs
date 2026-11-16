@@ -1,5 +1,4 @@
 //! Frontend — TUI state, events, cozy rendering. Only talks to `crate::backend::MiruBackend`.
-pub mod actions;
 pub mod app;
 pub mod event;
 pub mod layout;

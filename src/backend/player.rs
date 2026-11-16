@@ -115,10 +115,6 @@ impl MpvPlayer {
         Ok(false)
     }
 
-    pub fn is_playing(&self) -> bool {
-        self.child.is_some()
-    }
-
     /// Send a JSON IPC command to mpv if the socket/pipe exists (best-effort).
     #[allow(dead_code)]
     pub async fn send_ipc(&self, json_cmd: &str) -> Result<()> {

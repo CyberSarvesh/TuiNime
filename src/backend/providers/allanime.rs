@@ -13,7 +13,7 @@ use super::traits::{Anime, AnimeProvider, Episode, StreamSource};
 ///      → newline-separated episode numbers, user picks one
 ///   3. `get_episode_url()` — POST `episode(showId, translationType, episodeString)` → `sourceUrls`
 ///      each `sourceUrl` is a hex obfuscated `--<hex>` string that needs decrypting:
-///        `01→9 08→0 05→= 0a→2 0b→3 0c→4 07→? 00→8 5c→d 0f→7 5e→f 17→/ 54→l 09→1 48→p 4f→w 0e→6 5b→c 5d→e 0d→5 53→k 1e→& 5a→b 59→a 4a→r 4c→t 4e→v 57→o 51→i`
+///      each byte XOR 0x38 (ani-cli spells this out as a sed table: `01→9 08→0 05→= …`),
 ///      then `/clock` → `/clock.json`, fetch `https://allanime.day{path}` and `get_links()` extracts
 ///      `link` + `resolutionStr` or `hls` url. Links are `quality > url`, sorted, then selected.
 ///
@@ -38,10 +38,6 @@ impl AllAnimeProvider {
             mode: "sub".to_string(),
         }
     }
-    pub fn with_mode(mode: impl Into<String>) -> Self {
-        Self { client: super::http_client(BROWSER_UA), mode: mode.into() }
-    }
-
     /// Decode an AllAnime `--<hex>` source URL.
     ///
     /// ani-cli's long sed table is just every byte XOR `0x38` (e.g. `01` → `'9'` = 0x39).

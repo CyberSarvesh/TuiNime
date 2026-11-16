@@ -3,13 +3,13 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::backend::{Anime, MiruBackend};
 use crate::frontend::services::{self, BgEvent};
-use crate::frontend::theme::{Theme, ThemeKind};
+use crate::frontend::theme::Theme;
 use crate::frontend::ui::carousel::CarouselState;
 use crate::frontend::ui::hero::HeroState;
 use crate::frontend::widgets::poster::PosterRenderer;
 
 // re-export for `crate::frontend::app::AppView` compat (old import path)
-pub use crate::frontend::state::{AppView, Focus};
+pub use crate::frontend::state::AppView;
 
 pub const ROW_CONTINUE: usize = 0;
 pub const ROW_TRENDING: usize = 1;
@@ -20,7 +20,6 @@ const TRENDING_TITLE: &str = "Trending Now";
 pub struct App {
     pub running: bool,
     pub view: AppView,
-    pub focus: Focus,
     pub active_carousel: usize,
     pub carousels: Vec<CarouselState>,
     pub hero: HeroState,
@@ -51,7 +50,7 @@ impl App {
         ];
         let (bg_tx, bg_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
-            running: true, view: AppView::Browse, focus: Focus::Carousel,
+            running: true, view: AppView::Browse,
             active_carousel: ROW_TRENDING, carousels, hero: HeroState::default(),
             search_query: String::new(),
             status: "/ search • q quit • ←→ move • enter open".to_string(),
@@ -61,11 +60,9 @@ impl App {
     }
 
     pub fn cycle_theme(&mut self) {
-        let next = match self.theme.kind {
-            ThemeKind::Cozy => ThemeKind::Midnight,
-            ThemeKind::Midnight => ThemeKind::Paper,
-            ThemeKind::Paper => ThemeKind::Cozy,
-        };
+        let kinds = Theme::all_kinds();
+        let i = kinds.iter().position(|k| *k == self.theme.kind).unwrap_or(0);
+        let next = kinds[(i + 1) % kinds.len()];
         self.theme = Theme::from_kind(next);
         self.status = format!("theme → {}", self.theme.name());
     }
@@ -166,18 +163,17 @@ impl App {
             KeyCode::Char('q') => { self.running = false; }
             KeyCode::Char('/') => {
                 self.view = AppView::Search;
-                self.focus = Focus::SearchInput;
                 self.status = "search — enter to go • esc to cancel".to_string();
             }
             KeyCode::Esc => {
-                self.focus = Focus::Carousel;
+               
                 self.restore_trending();
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.active_carousel > 0 { self.active_carousel -= 1; self.focus = Focus::Carousel; self.sync_hero(); }
+                if self.active_carousel > 0 { self.active_carousel -= 1; self.sync_hero(); }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.active_carousel + 1 < self.carousels.len() { self.active_carousel += 1; self.focus = Focus::Carousel; self.sync_hero(); }
+                if self.active_carousel + 1 < self.carousels.len() { self.active_carousel += 1; self.sync_hero(); }
             }
             KeyCode::Left | KeyCode::Char('h') => self.scroll(false),
             KeyCode::Right | KeyCode::Char('l') => self.scroll(true),
@@ -203,7 +199,7 @@ impl App {
 
     fn on_key_search(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => { self.view = AppView::Browse; self.focus = Focus::Carousel; self.search_query.clear(); }
+            KeyCode::Esc => { self.view = AppView::Browse; self.search_query.clear(); }
             KeyCode::Enter => {
                 let q = self.search_query.trim().to_string();
                 if q.is_empty() { return; }
@@ -212,7 +208,7 @@ impl App {
                 self.status = format!("searching \"{q}\"…");
                 self.search_query.clear();
                 self.view = AppView::Browse;
-                self.focus = Focus::Carousel;
+               
             }
             KeyCode::Backspace => { self.search_query.pop(); }
             KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {

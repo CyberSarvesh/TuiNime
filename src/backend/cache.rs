@@ -48,10 +48,6 @@ impl ImageCache {
         })
     }
 
-    pub fn cache_dir(&self) -> &Path {
-        &self.cache_dir
-    }
-
     fn key_for(url: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -70,11 +66,6 @@ impl ImageCache {
         // strip query string from ext
         let ext = ext.split('?').next().unwrap_or("jpg");
         self.cache_dir.join(format!("{key}.{ext}"))
-    }
-
-    /// Public helper for UI to check sync if a poster is already on disk (for cozy placeholder vs image).
-    pub fn cached_path(&self, url: &str) -> PathBuf {
-        self.path_for(url)
     }
 
     pub fn is_cached(&self, url: &str) -> bool {
@@ -105,13 +96,6 @@ impl ImageCache {
         }
         self.memory.lock().await.insert(url.to_string(), bytes.clone());
         Ok(bytes)
-    }
-
-    /// Fetch and decode to `image::DynamicImage` (for `ratatui-image`).
-    pub async fn get_image(&self, url: &str) -> Result<image::DynamicImage> {
-        let bytes = self.get_or_fetch(url).await?;
-        let img = image::load_from_memory(&bytes).context("decode poster")?;
-        Ok(img)
     }
 
     /// Try to load from disk synchronously (used in render without blocking async).
@@ -168,7 +152,4 @@ impl ImageCache {
         }
     }
 
-    pub async fn clear_memory(&self) {
-        self.memory.lock().await.clear();
-    }
 }

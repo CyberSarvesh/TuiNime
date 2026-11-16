@@ -126,7 +126,7 @@ where
             }
             Some(Ok(Event::Key(k))) if k.kind == crossterm::event::KeyEventKind::Press => app.on_key(k).await,
             Some(Ok(Event::Mouse(m))) => app.on_mouse(m).await,
-            Some(Ok(Event::Resize(_, _))) => {}
+            Some(Ok(Event::Resize)) => {}
             Some(Ok(Event::Tick)) => app.on_tick().await,
             Some(Err(e)) => tracing::warn!("event error: {e}"),
             None => break,

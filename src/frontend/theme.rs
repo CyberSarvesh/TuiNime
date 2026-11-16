@@ -6,15 +6,12 @@
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ThemeKind {
+    #[default]
     Cozy,   // warm paper / cafe — current default
     Midnight, // cooler, higher contrast
     Paper,  // light cozy
-}
-
-impl Default for ThemeKind {
-    fn default() -> Self { Self::Cozy }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

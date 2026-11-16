@@ -13,20 +13,8 @@ use ratatui::{
 };
 
 use crate::frontend::app::App;
-use crate::frontend::screens::{Screen, ScreenKind};
 use crate::frontend::theme::Theme;
 use crate::frontend::ui::{carousel, hero};
-
-pub struct BrowseScreen;
-impl Screen for BrowseScreen {
-    const KIND: ScreenKind = ScreenKind::Separate;
-    const NAME: &'static str = "browse";
-    fn render(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect, theme: Theme) {
-        render(f, app, theme);
-        let _ = area;
-    }
-}
-pub const KIND: ScreenKind = ScreenKind::Separate;
 
 pub fn render(f: &mut Frame, app: &App, theme: Theme) {
     let area = f.area();

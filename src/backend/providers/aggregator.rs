@@ -23,20 +23,9 @@ where
         }
     }
 
-    pub fn with_providers(metadata: M, providers: Vec<Box<dyn AnimeProvider>>) -> Self {
-        Self {
-            metadata,
-            stream_providers: providers,
-        }
-    }
-
     pub fn add_provider(&mut self, p: impl AnimeProvider + 'static) {
         self.stream_providers.push(Box::new(p));
     }
-    pub fn add_provider_front(&mut self, p: impl AnimeProvider + 'static) {
-        self.stream_providers.insert(0, Box::new(p));
-    }
-
     // --- Metadata (delegated to AniList) ---
 
     pub async fn trending(&self, limit: u8) -> Result<Vec<Anime>> {
@@ -64,38 +53,7 @@ where
         }
     }
 
-    pub async fn details(&self, id: &str) -> Result<Anime> {
-        self.metadata.details(id).await
-    }
-
     // --- Stream resolution with failover ---
-
-    /// Resolve playable sources for an anime by trying each provider in order.
-    /// `anime_id` is the AniList ID; providers map it via search internally.
-    pub async fn resolve_streams(&self, anime_id: &str) -> Result<Vec<StreamSource>> {
-        let mut last_err: Option<anyhow::Error> = None;
-        for provider in &self.stream_providers {
-            match provider.episodes(anime_id).await {
-                Ok(episodes) if !episodes.is_empty() => {
-                    let ep_id = &episodes[0].id;
-                    match provider.streams(ep_id).await {
-                        Ok(sources) if !sources.is_empty() => return Ok(sources),
-                        Ok(_) => continue,
-                        Err(e) => {
-                            last_err = Some(e);
-                            continue;
-                        }
-                    }
-                }
-                Ok(_) => continue,
-                Err(e) => {
-                    last_err = Some(e);
-                    continue;
-                }
-            }
-        }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no stream providers available")))
-    }
 
     /// ani-cli style: search each provider by title → pick the best-matching show →
     /// episode list → stream links for episode 1.
@@ -148,18 +106,6 @@ where
         Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no stream provider found {}", anime.title)))
     }
 
-    /// Resolve streams for a concrete provider episode ID directly.
-    pub async fn resolve_episode_streams(&self, episode_id: &str) -> Result<Vec<StreamSource>> {
-        let mut last_err: Option<anyhow::Error> = None;
-        for p in &self.stream_providers {
-            match p.streams(episode_id).await {
-                Ok(s) if !s.is_empty() => return Ok(s),
-                Ok(_) => continue,
-                Err(e) => last_err = Some(e),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no streams found for episode {episode_id}")))
-    }
 }
 
 /// Lowercase, keep only letters/digits, collapse everything else to single spaces.

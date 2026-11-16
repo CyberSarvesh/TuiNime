@@ -151,29 +151,6 @@ impl MetadataProvider for AniListClient {
         Ok(media.iter().map(Self::map_media).collect())
     }
 
-    async fn details(&self, id: &str) -> Result<Anime> {
-        let q = r#"
-            query ($id: Int) {
-                Media(id: $id, type: ANIME) {
-                    id
-                    title { romaji english native }
-                    description
-                    coverImage { extraLarge large }
-                    bannerImage
-                    averageScore
-                    seasonYear
-                    episodes
-                    status
-                    genres
-                }
-            }
-        "#;
-        let id_int: i64 = id.parse().context("invalid AniList id")?;
-        let v = self.query(q, json!({ "id": id_int })).await?;
-        let m: AnilistMedia =
-            serde_json::from_value(v["data"]["Media"].clone()).context("parse details")?;
-        Ok(Self::map_media(&m))
-    }
 }
 
 impl Default for AniListClient {

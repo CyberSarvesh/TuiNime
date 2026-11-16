@@ -53,5 +53,4 @@ pub trait MetadataProvider: Send + Sync {
     async fn trending(&self, limit: u8) -> Result<Vec<Anime>>;
     async fn seasonal(&self, year: u16, season: &str, limit: u8) -> Result<Vec<Anime>>;
     async fn search(&self, query: &str, limit: u8) -> Result<Vec<Anime>>;
-    async fn details(&self, id: &str) -> Result<Anime>;
 }

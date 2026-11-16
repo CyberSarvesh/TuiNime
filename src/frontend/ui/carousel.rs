@@ -25,7 +25,7 @@ impl CarouselState {
     pub fn selected_item(&self) -> Option<&Anime> { self.items.get(self.selected) }
     /// Replace the row's contents and reset the cursor to the first item.
     pub fn set_items(&mut self, items: Vec<Anime>) { self.items = items; self.selected = 0; self.offset = 0; }
-    pub fn scroll_right(&mut self) { if self.items.is_empty() { return; } if self.selected + 1 < self.items.len() { self.selected += 1; if self.selected >= self.offset + 5 { self.offset += 1; } } }
+    pub fn scroll_right(&mut self) { if self.selected + 1 < self.items.len() { self.selected += 1; if self.selected >= self.offset + 5 { self.offset += 1; } } }
     pub fn scroll_left(&mut self) { if self.selected > 0 { self.selected -= 1; if self.selected < self.offset { self.offset = self.selected; } } }
 }
 
