@@ -10,12 +10,11 @@ use crate::frontend::widgets::poster::PosterRenderer;
 
 // re-export for `crate::frontend::app::AppView` compat (old import path)
 pub use crate::frontend::state::AppView;
-use crate::frontend::state::{DetailState, Episodes, Status};
+use crate::frontend::state::{remember_search, DetailState, Episodes, SearchResults, SearchState, Status};
 
 pub const ROW_CONTINUE: usize = 0;
 pub const ROW_TRENDING: usize = 1;
 pub const ROW_SEASON: usize = 2;
-const TRENDING_TITLE: &str = "Trending Now";
 
 /// Frontend state — only talks to `MiruBackend` interface, never scrapers directly.
 pub struct App {
@@ -24,7 +23,9 @@ pub struct App {
     pub active_carousel: usize,
     pub carousels: Vec<CarouselState>,
     pub hero: HeroState,
-    pub search_query: String,
+    pub search: SearchState,
+    /// Newest first; shown on the search screen while the box is empty.
+    pub recent_searches: Vec<String>,
     pub status: Status,
     /// Frame counter driving spinners; advanced on every tick.
     pub tick: u64,
@@ -39,12 +40,10 @@ pub struct App {
     pub dub: bool,
     /// Screen to return to when playback stops.
     pub player_return: AppView,
-    /// Trending list kept aside while search results occupy its row (Esc restores it).
-    trending: Vec<Anime>,
     /// Show whose streams are being looked up, so repeated `p` presses don't stack requests.
     resolving: Option<String>,
-    /// Incremented per search so a slow, older search can't overwrite a newer one.
-    search_seq: u64,
+    /// Screen to return to when leaving details (browse or search).
+    detail_return: AppView,
     bg_tx: UnboundedSender<BgEvent>,
     bg_rx: UnboundedReceiver<BgEvent>,
 }
@@ -54,7 +53,7 @@ impl App {
         let backend = MiruBackend::new();
         let mut carousels = vec![
             CarouselState::new("Continue Watching", vec![]),
-            CarouselState::new(TRENDING_TITLE, vec![]),
+            CarouselState::new("Trending Now", vec![]),
             CarouselState::new("Popular This Season", vec![]),
         ];
         carousels[ROW_TRENDING].loading = true;
@@ -63,11 +62,11 @@ impl App {
         Self {
             running: true, view: AppView::Browse,
             active_carousel: ROW_TRENDING, carousels, hero: HeroState::default(),
-            search_query: String::new(),
+            search: SearchState::default(), recent_searches: Vec::new(),
             status: Status::info("welcome"), tick: 0,
             backend, theme: Theme::cozy(), posters, now_playing: None,
             detail: None, dub: false, player_return: AppView::Browse,
-            trending: Vec::new(), resolving: None, search_seq: 0, bg_tx, bg_rx,
+            resolving: None, detail_return: AppView::Browse, bg_tx, bg_rx,
         }
     }
 
@@ -93,10 +92,8 @@ impl App {
     pub async fn on_background(&mut self, ev: BgEvent) {
         match ev {
             BgEvent::Trending(list) => {
-                self.trending = list.clone();
                 if let Some(row) = self.carousels.get_mut(ROW_TRENDING) {
-                    // don't clobber search results that arrived first
-                    if row.title == TRENDING_TITLE { row.set_items(list); }
+                    row.set_items(list);
                 }
                 self.ensure_active_visible();
                 self.sync_hero();
@@ -115,19 +112,19 @@ impl App {
                 self.ensure_active_visible();
             }
             BgEvent::Search { seq, query, result } => {
-                if seq != self.search_seq { return; } // superseded by a newer search
+                if seq != self.search.seq {
+                    return; // superseded by a newer search
+                }
+                self.search.selected = 0;
                 match result {
                     Ok(results) => {
-                        let n = results.len();
-                        if let Some(row) = self.carousels.get_mut(ROW_TRENDING) {
-                            row.title = format!("Results for \"{query}\"");
-                            row.set_items(results);
-                        }
-                        self.active_carousel = ROW_TRENDING;
-                        self.sync_hero();
-                        self.status = Status::info(format!("found {n} results for \"{query}\" — esc for trending"));
+                        self.status = Status::info(format!("{} results for \"{query}\"", results.len()));
+                        self.search.results = SearchResults::Loaded(results);
                     }
-                    Err(e) => self.status = Status::error(format!("search failed: {}", short(&e))),
+                    Err(e) => {
+                        self.status = Status::error(format!("search failed: {}", short(&e)));
+                        self.search.results = SearchResults::Failed(short(&e));
+                    }
                 }
             }
             BgEvent::Episodes { anime_id, dub, result } => {
@@ -203,7 +200,6 @@ impl App {
             // `q` quits only from browse — in search it is a letter, in overlays it means "back"
             KeyCode::Char('q') => { self.running = false; }
             KeyCode::Char('/') => self.view = AppView::Search,
-            KeyCode::Esc => self.restore_trending(),
             KeyCode::Up | KeyCode::Char('k') => self.move_row(false),
             KeyCode::Down | KeyCode::Char('j') => self.move_row(true),
             KeyCode::Left | KeyCode::Char('h') => self.scroll(false),
@@ -226,7 +222,7 @@ impl App {
         };
         let cols = d.grid_cols.get().max(1) as isize;
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => self.view = AppView::Browse,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => self.view = self.detail_return,
             KeyCode::Left | KeyCode::Char('h') => d.move_by(-1),
             KeyCode::Right | KeyCode::Char('l') => d.move_by(1),
             KeyCode::Up | KeyCode::Char('k') => d.move_by(-cols),
@@ -255,6 +251,9 @@ impl App {
             self.backend.cache.prefetch(u.clone());
         }
         self.detail = Some(DetailState::new(anime));
+        if self.view != AppView::Detail {
+            self.detail_return = self.view;
+        }
         self.view = AppView::Detail;
         self.reload_episodes();
     }
@@ -286,23 +285,67 @@ impl App {
     }
 
     fn on_key_search(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Esc => { self.view = AppView::Browse; self.search_query.clear(); }
-            KeyCode::Enter => {
-                let q = self.search_query.trim().to_string();
-                if q.is_empty() { return; }
-                self.search_seq += 1;
-                services::spawn_search(self.backend.catalog(), self.bg_tx.clone(), self.search_seq, q.clone());
-                self.status = Status::busy(format!("searching \"{q}\"…"));
-                self.search_query.clear();
-                self.view = AppView::Browse;
+            // first Esc clears the box, the second leaves the screen
+            KeyCode::Esc if !self.search.query.is_empty() => {
+                self.search.query.clear();
+                self.search.edited(std::time::Instant::now());
             }
-            KeyCode::Backspace => { self.search_query.pop(); }
+            KeyCode::Esc => self.view = AppView::Browse,
+            KeyCode::Up => self.search.move_by(-1, &self.recent_searches),
+            KeyCode::Down | KeyCode::Tab => self.search.move_by(1, &self.recent_searches),
+            KeyCode::Char('p') if ctrl => self.search.move_by(-1, &self.recent_searches),
+            KeyCode::Char('n') if ctrl => self.search.move_by(1, &self.recent_searches),
+            KeyCode::Char('u') if ctrl => {
+                self.search.query.clear();
+                self.search.edited(std::time::Instant::now());
+            }
+            KeyCode::Enter => self.search_enter(),
+            KeyCode::Backspace => {
+                self.search.query.pop();
+                self.search.edited(std::time::Instant::now());
+            }
             KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
-                self.search_query.push(c);
+                self.search.query.push(c);
+                self.search.edited(std::time::Instant::now());
             }
             _ => {}
         }
+    }
+
+    /// Enter on the search screen: open the highlighted result, re-run a recent search,
+    /// or search right away if results aren't in yet.
+    fn search_enter(&mut self) {
+        match &self.search.results {
+            SearchResults::Loaded(r) if !r.is_empty() && self.search.sent == self.search.query.trim() => {
+                let Some(anime) = r.get(self.search.selected).cloned() else { return };
+                remember_search(&mut self.recent_searches, &self.search.query);
+                self.open_detail(anime);
+            }
+            SearchResults::Idle if self.search.query.trim().is_empty() => {
+                if let Some(q) = self.recent_searches.get(self.search.selected).cloned() {
+                    self.search.query = q;
+                    self.start_search();
+                }
+            }
+            _ => self.start_search(),
+        }
+    }
+
+    /// Send a search for the current query now.
+    fn start_search(&mut self) {
+        let q = self.search.query.trim().to_string();
+        self.search.due = None;
+        if q.is_empty() {
+            return;
+        }
+        self.search.seq += 1;
+        self.search.sent = q.clone();
+        self.search.results = SearchResults::Loading;
+        self.search.selected = 0;
+        self.status = Status::busy(format!("searching \"{q}\"…"));
+        services::spawn_search(self.backend.catalog(), self.bg_tx.clone(), self.search.seq, q);
     }
 
     async fn on_key_player(&mut self, key: KeyEvent) {
@@ -326,6 +369,13 @@ impl App {
 
     pub async fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+        // live search: fire once typing has paused, if the text actually changed
+        if self.search.due.is_some_and(|due| std::time::Instant::now() >= due) {
+            self.search.due = None;
+            if self.search.query.trim().chars().count() >= 2 && self.search.query.trim() != self.search.sent {
+                self.start_search();
+            }
+        }
         // mpv closed on its own (window closed / episode ended) → leave the player overlay
         if let Ok(true) = self.backend.player_mut().poll().await {
             if self.view == AppView::Player {
@@ -341,17 +391,6 @@ impl App {
             if right { c.scroll_right() } else { c.scroll_left() }
         }
         self.sync_hero();
-    }
-
-    fn restore_trending(&mut self) {
-        if let Some(row) = self.carousels.get_mut(ROW_TRENDING) {
-            if row.title != TRENDING_TITLE {
-                row.title = TRENDING_TITLE.to_string();
-                row.set_items(self.trending.clone());
-                self.sync_hero();
-                self.status = Status::info("back to trending");
-            }
-        }
     }
 
     /// Rows worth drawing: anything with items or still loading. "Continue Watching" only

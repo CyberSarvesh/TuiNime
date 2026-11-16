@@ -87,3 +87,104 @@ impl DetailState {
         self.selected = (self.selected as isize + delta).clamp(0, n as isize - 1) as usize;
     }
 }
+
+/// What the search screen's result list is showing.
+#[derive(Debug, Clone)]
+pub enum SearchResults {
+    /// Nothing searched yet (recent searches are shown instead).
+    Idle,
+    Loading,
+    Loaded(Vec<Anime>),
+    Failed(String),
+}
+
+/// How long typing must pause before a live search is sent.
+pub const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(350);
+/// Most recent searches remembered.
+pub const MAX_RECENT: usize = 8;
+
+#[derive(Debug)]
+pub struct SearchState {
+    pub query: String,
+    pub results: SearchResults,
+    /// Highlighted row: a result, or a recent search while the box is empty.
+    pub selected: usize,
+    /// When the pending live search should fire (reset on every keystroke).
+    pub due: Option<std::time::Instant>,
+    /// Query of the last search sent, so the same text isn't searched twice.
+    pub sent: String,
+    /// Incremented per search so a slow, older search can't overwrite a newer one.
+    pub seq: u64,
+}
+
+impl Default for SearchState {
+    fn default() -> Self {
+        Self { query: String::new(), results: SearchResults::Idle, selected: 0, due: None, sent: String::new(), seq: 0 }
+    }
+}
+
+impl SearchState {
+    /// Rows the list currently has (results, or recents when idle).
+    pub fn row_count(&self, recent: &[String]) -> usize {
+        match &self.results {
+            SearchResults::Loaded(r) => r.len(),
+            SearchResults::Idle => recent.len(),
+            _ => 0,
+        }
+    }
+
+    pub fn move_by(&mut self, delta: isize, recent: &[String]) {
+        let n = self.row_count(recent);
+        self.selected = if n == 0 { 0 } else { (self.selected as isize + delta).clamp(0, n as isize - 1) as usize };
+    }
+
+    /// Text changed: schedule a live search and go back to recents if the box is empty.
+    pub fn edited(&mut self, now: std::time::Instant) {
+        self.selected = 0;
+        if self.query.trim().is_empty() {
+            self.results = SearchResults::Idle;
+            self.due = None;
+            self.sent.clear();
+        } else {
+            self.due = Some(now + SEARCH_DEBOUNCE);
+        }
+    }
+}
+
+/// Put `query` at the front of `recent`, without duplicates, keeping at most `MAX_RECENT`.
+pub fn remember_search(recent: &mut Vec<String>, query: &str) {
+    let q = query.trim();
+    if q.is_empty() {
+        return;
+    }
+    recent.retain(|r| !r.eq_ignore_ascii_case(q));
+    recent.insert(0, q.to_string());
+    recent.truncate(MAX_RECENT);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_searches_dedupe_and_cap() {
+        let mut r = Vec::new();
+        for q in ["naruto", "bleach", "Naruto", "  ", "a", "b", "c", "d", "e", "f", "g"] {
+            remember_search(&mut r, q);
+        }
+        assert_eq!(r.len(), MAX_RECENT);
+        assert_eq!(r[0], "g");
+        assert_eq!(r.iter().filter(|q| q.eq_ignore_ascii_case("naruto")).count(), 1);
+    }
+
+    #[test]
+    fn editing_schedules_or_clears() {
+        let now = std::time::Instant::now();
+        let mut s = SearchState { query: "fri".into(), ..Default::default() };
+        s.edited(now);
+        assert_eq!(s.due, Some(now + SEARCH_DEBOUNCE));
+        s.query.clear();
+        s.edited(now);
+        assert!(s.due.is_none() && matches!(s.results, SearchResults::Idle));
+    }
+}

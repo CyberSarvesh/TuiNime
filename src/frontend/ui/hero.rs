@@ -89,7 +89,7 @@ pub fn render_cover_placeholder(f: &mut Frame, area: Rect, loading: bool, t: The
         .style(Style::default().bg(t.surface_hover));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if inner.height == 0 {
+    if inner.height == 0 || inner.width < 8 {
         return;
     }
     let label = if loading { "loading…" } else { "no cover" };

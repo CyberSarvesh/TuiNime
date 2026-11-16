@@ -33,12 +33,11 @@ pub fn render(f: &mut Frame, app: &App) {
     let base = if app.view == AppView::Player { app.player_return } else { app.view };
     match base {
         AppView::Detail => screens::detail::render(f, app, body, t),
+        AppView::Search => screens::search::render(f, app, body, t),
         _ => screens::browse::render(f, app, body, t),
     }
-    match app.view {
-        AppView::Search => screens::search::render(f, app, body, t),
-        AppView::Player => screens::player::render(f, app, body, t),
-        AppView::Browse | AppView::Detail => {}
+    if app.view == AppView::Player {
+        screens::player::render(f, app, body, t);
     }
     render_footer(f, app, footer, t);
 }
@@ -69,7 +68,7 @@ pub fn hints(v: AppView) -> &'static str {
     match v {
         AppView::Browse => "←→ move  ↑↓ rows  ⏎ details  p play  / search  t theme  q quit",
         AppView::Detail => "←↑↓→ episode  ⏎ play  s sub/dub  [ ] scroll text  esc back",
-        AppView::Search => "⏎ search  esc cancel",
+        AppView::Search => "type to search  ↑↓ pick  ⏎ open  esc clear/back",
         AppView::Player => "esc stop",
     }
 }
@@ -305,6 +304,103 @@ mod screen_tests {
         let a = detail_app(200).await;
         for w in [1, 5, 20, 40, 69, 70, 100, 200] {
             for h in [1, 3, 6, 10, 20, 50] {
+                draw(&a, w, h);
+            }
+        }
+    }
+
+    use crate::frontend::state::SearchResults;
+
+    async fn type_text(a: &mut crate::frontend::app::App, text: &str) {
+        for c in text.chars() {
+            a.on_key(key(KeyCode::Char(c))).await;
+        }
+    }
+
+    /// Pretend the debounce delay has passed and let the tick send the search.
+    async fn fire_debounce(a: &mut crate::frontend::app::App) {
+        a.search.due = Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+        a.on_tick().await;
+    }
+
+    #[tokio::test]
+    async fn live_search_flow() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Char('/'))).await;
+        assert_eq!(a.view, AppView::Search);
+        let s = draw(&a, 100, 30);
+        show("search, empty (100x30)", &s);
+        assert!(s.contains("type a show name…"));
+
+        type_text(&mut a, "jojo q").await; // `q` is a letter here, not quit
+        assert!(a.running);
+        assert_eq!(a.search.query, "jojo q");
+        assert!(a.search.due.is_some(), "typing schedules a live search");
+        fire_debounce(&mut a).await;
+        assert!(matches!(a.search.results, SearchResults::Loading));
+        assert_eq!((a.search.seq, a.search.sent.as_str()), (1, "jojo q"));
+        assert!(draw(&a, 100, 30).contains("searching…"));
+
+        // an older search answering late is ignored
+        a.on_background(BgEvent::Search { seq: 0, query: "jo".into(), result: Ok(vec![rich("Wrong", 0)]) }).await;
+        assert!(matches!(a.search.results, SearchResults::Loading));
+
+        let results = (0..6).map(|i| rich(&format!("JoJo Part {i}"), i)).collect();
+        a.on_background(BgEvent::Search { seq: 1, query: "jojo q".into(), result: Ok(results) }).await;
+        a.on_key(key(KeyCode::Down)).await;
+        let s = draw(&a, 100, 30);
+        show("search results, second highlighted (100x30)", &s);
+        assert!(s.contains("JoJo Part 0") && s.contains("JoJo Part 1"));
+        assert!(s.contains("2/6"));
+
+        a.on_key(key(KeyCode::Enter)).await;
+        assert_eq!(a.view, AppView::Detail);
+        assert_eq!(a.detail.as_ref().unwrap().anime.title, "JoJo Part 1");
+        assert_eq!(a.recent_searches, vec!["jojo q".to_string()]);
+        a.on_key(key(KeyCode::Esc)).await;
+        assert_eq!(a.view, AppView::Search, "esc from details goes back to the results");
+
+        a.on_key(key(KeyCode::Esc)).await; // clears the box
+        assert!(a.search.query.is_empty() && a.view == AppView::Search);
+        let s = draw(&a, 100, 30);
+        show("search, empty with recent searches (100x30)", &s);
+        assert!(s.contains("recent searches") && s.contains("↺ jojo q"));
+        a.on_key(key(KeyCode::Enter)).await; // re-run the recent search
+        assert_eq!(a.search.query, "jojo q");
+        assert!(matches!(a.search.results, SearchResults::Loading));
+
+        a.on_key(key(KeyCode::Esc)).await;
+        a.on_key(key(KeyCode::Esc)).await;
+        assert_eq!(a.view, AppView::Browse);
+    }
+
+    #[tokio::test]
+    async fn search_waits_for_two_characters_and_reports_errors() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Char('/'))).await;
+        type_text(&mut a, "x").await;
+        fire_debounce(&mut a).await;
+        assert!(!matches!(a.search.results, SearchResults::Loading), "one letter is too short for live search");
+        type_text(&mut a, "y").await;
+        fire_debounce(&mut a).await;
+        let seq = a.search.seq;
+        a.on_background(BgEvent::Search { seq, query: "xy".into(), result: Err("AniList http 500".into()) }).await;
+        let s = draw(&a, 90, 24);
+        show("search failure (90x24)", &s);
+        assert!(s.contains("search failed: AniList http 500"));
+    }
+
+    #[tokio::test]
+    async fn search_any_size_renders_without_panicking() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Char('/'))).await;
+        type_text(&mut a, "show").await;
+        fire_debounce(&mut a).await;
+        let seq = a.search.seq;
+        a.on_background(BgEvent::Search { seq, query: "show".into(), result: Ok((0..40).map(|i| rich("S", i)).collect()) }).await;
+        for _ in 0..30 { a.on_key(key(KeyCode::Down)).await; }
+        for w in [1, 5, 10, 11, 30, 80, 200] {
+            for h in [1, 3, 4, 5, 8, 20, 60] {
                 draw(&a, w, h);
             }
         }
