@@ -45,7 +45,8 @@ fn render_scrollbar(f: &mut Frame, area: Rect, s: ThemedScrollbar, t: ScrollbarT
     let mut spans = Vec::new();
     for x in 0..bar.width {
         let is_thumb = x >= thumb_x.saturating_sub(bar.x) && x < thumb_x.saturating_sub(bar.x) + thumb_w;
-        let ch = if is_thumb { "█" } else { "░" };
+        // thin line glyphs: a heavy thumb over a light track, matching the rounded borders
+        let ch = if is_thumb { "━" } else { "─" };
         let col = if is_thumb {
             if s.focused { t.thumb_focused } else { t.thumb }
         } else {
