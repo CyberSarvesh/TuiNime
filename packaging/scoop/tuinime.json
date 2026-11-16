@@ -1,0 +1,25 @@
+{
+    "version": "0.1.0",
+    "description": "Browse and stream anime from your terminal: posters, search, episode lists, and playback in mpv",
+    "homepage": "https://github.com/CyberSarvesh/TuiNime",
+    "license": "MIT",
+    "depends": "extras/mpv",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/CyberSarvesh/TuiNime/releases/download/v0.1.0/tuinime-x86_64-pc-windows-msvc.zip",
+            "hash": "REPLACE_AFTER_FIRST_RELEASE"
+        }
+    },
+    "bin": "tuinime.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/CyberSarvesh/TuiNime/releases/download/v$version/tuinime-x86_64-pc-windows-msvc.zip",
+                "hash": {
+                    "url": "$url.sha256"
+                }
+            }
+        }
+    }
+}

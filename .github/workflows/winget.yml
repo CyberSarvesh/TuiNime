@@ -1,0 +1,18 @@
+# Opens a pull request to microsoft/winget-pkgs for every published release.
+# Only works after the first version is already in winget (see PUBLISHING.md),
+# and needs a WINGET_TOKEN secret: a classic GitHub token with the public_repo scope.
+name: Publish to winget
+
+on:
+  release:
+    types: [released]
+
+jobs:
+  winget:
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: CyberSarvesh.TuiNime
+          installers-regex: '-pc-windows-msvc\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}
