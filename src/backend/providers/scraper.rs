@@ -19,8 +19,9 @@ impl ScraperProvider {
     pub fn new() -> Self {
         Self {
             client: super::http_client("tuinime/0.1"),
+            // The public api.consumet.org instance is gone; point this at a self-hosted one.
             consumet_base: std::env::var("MIRU_CONSUMET_URL")
-                .unwrap_or_else(|_| "https://api.consumet.org".to_string()),
+                .unwrap_or_else(|_| "http://localhost:3000".to_string()),
         }
     }
 
@@ -64,6 +65,7 @@ impl ScraperProvider {
                     episodes: None,
                     status: None,
                     genres: vec![],
+                    alt_titles: vec![],
                 })
             })
             .collect()
@@ -106,6 +108,7 @@ impl AnimeProvider for ScraperProvider {
                         episodes: None,
                         status: None,
                         genres: vec![],
+                        alt_titles: vec![],
                     });
                 }
                 Ok(out)
@@ -148,6 +151,12 @@ impl AnimeProvider for ScraperProvider {
         }
         let v: serde_json::Value = resp.json().await?;
         let sources = v.get("sources").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+        // Consumet returns the headers (usually Referer) the CDN expects alongside the sources.
+        let headers: Option<std::collections::HashMap<String, String>> = v
+            .get("headers")
+            .and_then(|h| h.as_object())
+            .map(|h| h.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect())
+            .filter(|h: &std::collections::HashMap<String, String>| !h.is_empty());
         Ok(sources
             .into_iter()
             .filter_map(|s| {
@@ -156,7 +165,7 @@ impl AnimeProvider for ScraperProvider {
                     is_m3u8: url.contains(".m3u8"),
                     url,
                     quality: s.get("quality").and_then(|x| x.as_str()).map(|x| x.to_string()),
-                    headers: None,
+                    headers: headers.clone(),
                 })
             })
             .collect())

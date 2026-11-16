@@ -15,6 +15,10 @@ pub struct Anime {
     pub episodes: Option<u32>,
     pub status: Option<String>,
     pub genres: Vec<String>,
+    /// Other names for the show (e.g. romaji / native). Stream providers often list a show
+    /// under its romaji title, so resolution searches these too.
+    #[serde(default)]
+    pub alt_titles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

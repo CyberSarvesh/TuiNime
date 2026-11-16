@@ -51,7 +51,7 @@ impl AniListClient {
             .unwrap_or_else(|| "Untitled".to_string());
         Anime {
             id: m.id.to_string(),
-            title,
+            title: title.clone(),
             description: m.description.clone().map(|d| strip_html(&d)),
             cover_image: m.cover_image.extra_large.clone().or(m.cover_image.large.clone()),
             banner_image: m.banner_image.clone(),
@@ -60,6 +60,12 @@ impl AniListClient {
             episodes: m.episodes,
             status: m.status.clone(),
             genres: m.genres.clone().unwrap_or_default(),
+            alt_titles: [&m.title.romaji, &m.title.english, &m.title.native]
+                .into_iter()
+                .flatten()
+                .filter(|t| **t != title)
+                .cloned()
+                .collect(),
         }
     }
 }

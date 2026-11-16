@@ -113,6 +113,7 @@ impl AnimeProvider for AllAnimeProvider {
                 episodes: Some(avail),
                 status: None,
                 genres: vec![],
+                alt_titles: vec![],
             });
         }
         Ok(out)

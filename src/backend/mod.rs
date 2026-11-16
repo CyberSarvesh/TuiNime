@@ -71,11 +71,11 @@ impl Default for MiruBackend {
 
 fn fallback_anime() -> Vec<Anime> {
     vec![
-        Anime { id: "1".into(), title: "One Piece".into(), description: Some("Gold Roger was known as the Pirate King...".into()), cover_image: Some("https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx21-ELSYx3y2QNT0.jpg".into()), banner_image: None, score: Some(87), year: Some(1999), episodes: None, status: Some("FINISHED".into()), genres: vec!["Adventure".into()] },
-        Anime { id: "20".into(), title: "Naruto".into(), description: Some("Naruto Uzumaki wants to be Hokage...".into()), cover_image: None, banner_image: None, score: Some(79), year: Some(2002), episodes: Some(220), status: None, genres: vec![] },
-        Anime { id: "16498".into(), title: "Attack on Titan".into(), description: None, cover_image: None, banner_image: None, score: Some(84), year: Some(2013), episodes: Some(25), status: None, genres: vec![] },
-        Anime { id: "11061".into(), title: "Hunter x Hunter (2011)".into(), description: None, cover_image: None, banner_image: None, score: Some(89), year: Some(2011), episodes: Some(148), status: None, genres: vec![] },
-        Anime { id: "1535".into(), title: "Death Note".into(), description: None, cover_image: None, banner_image: None, score: Some(84), year: Some(2006), episodes: Some(37), status: None, genres: vec![] },
-        Anime { id: "21".into(), title: "One Piece (Continue)".into(), description: None, cover_image: None, banner_image: None, score: Some(87), year: Some(1999), episodes: Some(1000), status: None, genres: vec![] },
+        Anime { id: "1".into(), title: "One Piece".into(), description: Some("Gold Roger was known as the Pirate King...".into()), cover_image: Some("https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx21-ELSYx3y2QNT0.jpg".into()), banner_image: None, score: Some(87), year: Some(1999), episodes: None, status: Some("FINISHED".into()), genres: vec!["Adventure".into()], alt_titles: vec![] },
+        Anime { id: "20".into(), title: "Naruto".into(), description: Some("Naruto Uzumaki wants to be Hokage...".into()), cover_image: None, banner_image: None, score: Some(79), year: Some(2002), episodes: Some(220), status: None, genres: vec![], alt_titles: vec![] },
+        Anime { id: "16498".into(), title: "Attack on Titan".into(), description: None, cover_image: None, banner_image: None, score: Some(84), year: Some(2013), episodes: Some(25), status: None, genres: vec![], alt_titles: vec![] },
+        Anime { id: "11061".into(), title: "Hunter x Hunter (2011)".into(), description: None, cover_image: None, banner_image: None, score: Some(89), year: Some(2011), episodes: Some(148), status: None, genres: vec![], alt_titles: vec![] },
+        Anime { id: "1535".into(), title: "Death Note".into(), description: None, cover_image: None, banner_image: None, score: Some(84), year: Some(2006), episodes: Some(37), status: None, genres: vec![], alt_titles: vec![] },
+        Anime { id: "21".into(), title: "One Piece (Continue)".into(), description: None, cover_image: None, banner_image: None, score: Some(87), year: Some(1999), episodes: Some(1000), status: None, genres: vec![], alt_titles: vec![] },
     ]
 }
