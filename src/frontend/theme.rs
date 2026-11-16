@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum ThemeKind {
     Cozy,   // warm paper / cafe — current default
     Midnight, // cooler, higher contrast
-    Paper,  // light cozy (future)
+    Paper,  // light cozy
 }
 
 impl Default for ThemeKind {
@@ -106,17 +106,45 @@ impl Theme {
         }
     }
 
+    /// Paper — light, warm off-white with ink-brown text.
+    pub fn paper() -> Self {
+        Self {
+            bg: Color::Rgb(242, 236, 224),
+            surface: Color::Rgb(250, 246, 238),
+            surface_hover: Color::Rgb(232, 222, 204),
+            border: Color::Rgb(196, 182, 160),
+            border_focus: Color::Rgb(166, 98, 42),
+            text: Color::Rgb(52, 44, 36),
+            text_dim: Color::Rgb(92, 80, 68),
+            text_muted: Color::Rgb(128, 116, 102),
+            accent: Color::Rgb(166, 98, 42),
+            accent_green: Color::Rgb(62, 120, 64),
+            scrollbar: ScrollbarTheme {
+                track: Color::Rgb(232, 222, 204),
+                thumb: Color::Rgb(196, 182, 160),
+                thumb_focused: Color::Rgb(166, 98, 42),
+            },
+            selector: SelectorTheme {
+                indicator: "▸ ",
+                indicator_color: Color::Rgb(166, 98, 42),
+                selected_bg: Color::Rgb(232, 222, 204),
+                selected_fg: Color::Rgb(52, 44, 36),
+            },
+            kind: ThemeKind::Paper,
+        }
+    }
+
     pub fn from_kind(kind: ThemeKind) -> Self {
         match kind {
             ThemeKind::Cozy => Self::cozy(),
             ThemeKind::Midnight => Self::midnight(),
-            ThemeKind::Paper => Self::cozy(), // todo: light variant
+            ThemeKind::Paper => Self::paper(),
         }
     }
 
     /// All available themes — drives the future selector/scrollbar you mentioned.
     pub fn all_kinds() -> &'static [ThemeKind] {
-        &[ThemeKind::Cozy, ThemeKind::Midnight]
+        &[ThemeKind::Cozy, ThemeKind::Midnight, ThemeKind::Paper]
     }
 
     pub fn name(&self) -> &'static str {
