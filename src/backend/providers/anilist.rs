@@ -15,10 +15,7 @@ pub struct AniListClient {
 impl AniListClient {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .user_agent("miru/0.1 (https://github.com/miru/miru)")
-                .build()
-                .expect("reqwest client"),
+            client: super::http_client("tuinime/0.1"),
         }
     }
 

@@ -41,9 +41,7 @@ impl ImageCache {
     pub fn with_dir(cache_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&cache_dir).context("create poster cache dir")?;
         Ok(Self {
-            client: reqwest::Client::builder()
-                .user_agent("tuinime/0.1")
-                .build()?,
+            client: crate::backend::providers::http_client("tuinime/0.1"),
             cache_dir,
             memory: Arc::new(Mutex::new(HashMap::new())),
             decoded: Arc::new(Mutex::new(HashMap::new())),

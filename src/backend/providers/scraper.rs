@@ -18,10 +18,7 @@ pub struct ScraperProvider {
 impl ScraperProvider {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .user_agent("miru/0.1")
-                .build()
-                .expect("reqwest client"),
+            client: super::http_client("tuinime/0.1"),
             consumet_base: std::env::var("MIRU_CONSUMET_URL")
                 .unwrap_or_else(|_| "https://api.consumet.org".to_string()),
         }
@@ -29,10 +26,7 @@ impl ScraperProvider {
 
     pub fn with_base(base: impl Into<String>) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .user_agent("miru/0.1")
-                .build()
-                .expect("reqwest client"),
+            client: super::http_client("tuinime/0.1"),
             consumet_base: base.into(),
         }
     }
