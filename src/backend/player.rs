@@ -59,6 +59,9 @@ impl MpvPlayer {
                 args.push(format!("--http-header-fields={}", extra.join(",")));
             }
         }
+        for sub in &source.subtitles {
+            args.push(format!("--sub-file={sub}"));
+        }
         args.push(source.url.clone());
         args
     }
@@ -151,10 +154,12 @@ mod tests {
                     .collect(),
             ),
             is_m3u8: true,
+            subtitles: vec!["https://cdn.example/en.vtt".into()],
         };
         let args = MpvPlayer::args_for(&src, "Show", std::path::Path::new("ipc"));
         assert!(args.contains(&"--referrer=https://allanime.to".to_string()));
         assert!(args.contains(&"--http-header-fields=X-Key: a\\,b".to_string()));
+        assert!(args.contains(&"--sub-file=https://cdn.example/en.vtt".to_string()));
         assert_eq!(args.last().unwrap(), "https://cdn.example/ep1.m3u8");
     }
 }

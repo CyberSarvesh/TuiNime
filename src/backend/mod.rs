@@ -9,6 +9,7 @@ pub use providers::traits::{Anime, Episode, StreamSource};
 pub use providers::aggregator::{EpisodeList, ProviderAggregator};
 pub use providers::anilist::AniListClient;
 pub use providers::allanime::AllAnimeProvider;
+pub use providers::hianime::HiAnimeProvider;
 pub use providers::scraper::ScraperProvider;
 
 use std::sync::Arc;
@@ -37,6 +38,8 @@ impl MiruBackend {
             ImageCache::new_temp()
         });
         let mut aggregator = ProviderAggregator::new(AniListClient::new());
+        // tried in this order: hianime.at (what ani-cli uses today), then AllAnime
+        aggregator.add_provider(HiAnimeProvider::new());
         aggregator.add_provider(AllAnimeProvider::new());
         // The public Consumet instance is dead; only use one the user runs themselves.
         if std::env::var_os("MIRU_CONSUMET_URL").is_some() {

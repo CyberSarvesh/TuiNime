@@ -159,6 +159,7 @@ impl AnimeProvider for ScraperProvider {
                     url,
                     quality: s.get("quality").and_then(|x| x.as_str()).map(|x| x.to_string()),
                     headers: headers.clone(),
+                    subtitles: Vec::new(),
                 })
             })
             .collect())

@@ -39,6 +39,9 @@ pub struct StreamSource {
     pub quality: Option<String>,
     pub headers: Option<std::collections::HashMap<String, String>>,
     pub is_m3u8: bool,
+    /// External subtitle files (e.g. `.vtt`), preferred track first.
+    #[serde(default)]
+    pub subtitles: Vec<String>,
 }
 
 /// Provider that can search and resolve streams.

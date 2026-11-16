@@ -221,7 +221,7 @@ impl AllAnimeProvider {
             if let Some(link) = extract_json_field(chunk, "link") {
                 let res = extract_json_field(chunk, "resolutionStr").unwrap_or_else(|| "0".to_string());
                 let url = link.replace("\\u002F", "/").replace('\\', "");
-                out.push(StreamSource { is_m3u8: url.contains(".m3u8"), url, quality: Some(res), headers: Self::referer_headers() });
+                out.push(StreamSource { is_m3u8: url.contains(".m3u8"), url, quality: Some(res), headers: Self::referer_headers(), subtitles: Vec::new() });
             } else if chunk.contains("\"hls\"") {
                 if let Some(url) = extract_json_field(chunk, "url") {
                     if url.contains("m3u8") {
@@ -229,7 +229,7 @@ impl AllAnimeProvider {
                         // expand m3u8 master playlist to individual qualities like ani-cli does
                         match self.expand_m3u8(&url).await {
                             Ok(mut v) => out.append(&mut v),
-                            Err(_) => out.push(StreamSource { url: url.clone(), quality: None, headers: Self::referer_headers(), is_m3u8: true }),
+                            Err(_) => out.push(StreamSource { url: url.clone(), quality: None, headers: Self::referer_headers(), is_m3u8: true, subtitles: Vec::new() }),
                         }
                     }
                 }
@@ -239,7 +239,7 @@ impl AllAnimeProvider {
             // fallback: find any http url in response
             for token in text.split('"') {
                 if token.starts_with("http") && (token.contains(".m3u8") || token.contains(".mp4")) {
-                    out.push(StreamSource { url: token.to_string(), quality: None, headers: Self::referer_headers(), is_m3u8: token.contains(".m3u8") });
+                    out.push(StreamSource { url: token.to_string(), quality: None, headers: Self::referer_headers(), is_m3u8: token.contains(".m3u8"), subtitles: Vec::new() });
                 }
             }
         }
@@ -258,7 +258,7 @@ impl AllAnimeProvider {
                 if let Some(next) = lines.next() {
                     let res = line.split('x').next_back().unwrap_or("0").split(',').next().unwrap_or("0");
                     let full = if next.starts_with("http") { next.to_string() } else { format!("{base}{next}") };
-                    out.push(StreamSource { url: full, quality: Some(format!("{}p", res.trim())), headers: Self::referer_headers(), is_m3u8: true });
+                    out.push(StreamSource { url: full, quality: Some(format!("{}p", res.trim())), headers: Self::referer_headers(), is_m3u8: true, subtitles: Vec::new() });
                 }
             }
         }
