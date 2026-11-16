@@ -42,6 +42,8 @@ pub struct Theme {
     pub text_muted: Color,
     pub accent: Color,
     pub accent_green: Color,
+    /// Error messages in the status bar.
+    pub error: Color,
     pub scrollbar: ScrollbarTheme,
     pub selector: SelectorTheme,
     pub kind: ThemeKind,
@@ -61,6 +63,7 @@ impl Theme {
             text_muted: Color::Rgb(124, 111, 100),
             accent: Color::Rgb(214, 167, 98),
             accent_green: Color::Rgb(142, 192, 124),
+            error: Color::Rgb(226, 112, 96),
             scrollbar: ScrollbarTheme {
                 track: Color::Rgb(48, 42, 36),
                 thumb: Color::Rgb(92, 80, 65),
@@ -88,6 +91,7 @@ impl Theme {
             text_muted: Color::Rgb(120, 120, 140),
             accent: Color::Rgb(138, 180, 255),
             accent_green: Color::Rgb(160, 220, 160),
+            error: Color::Rgb(240, 120, 128),
             scrollbar: ScrollbarTheme {
                 track: Color::Rgb(32, 32, 42),
                 thumb: Color::Rgb(60, 60, 75),
@@ -116,6 +120,7 @@ impl Theme {
             text_muted: Color::Rgb(128, 116, 102),
             accent: Color::Rgb(166, 98, 42),
             accent_green: Color::Rgb(62, 120, 64),
+            error: Color::Rgb(176, 48, 40),
             scrollbar: ScrollbarTheme {
                 track: Color::Rgb(232, 222, 204),
                 thumb: Color::Rgb(196, 182, 160),

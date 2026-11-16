@@ -1,93 +1,101 @@
+//! Hero — the large panel at the top of browse showing the highlighted show.
+
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Padding, Paragraph},
+    widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap},
     Frame,
 };
 
 use crate::backend::cache::ImageCache;
 use crate::backend::providers::traits::Anime;
 use crate::frontend::theme::Theme;
+use crate::frontend::widgets::meta;
 use crate::frontend::widgets::poster::PosterRenderer;
 
-#[derive(Debug, Clone)]
+/// The show the hero panel describes; `None` until something loads.
+#[derive(Debug, Clone, Default)]
 pub struct HeroState {
-    pub title: String,
-    pub description: String,
-    pub score: Option<u8>,
-    pub year: Option<u16>,
-    pub poster_url: Option<String>,
+    pub anime: Option<Anime>,
 }
 
-impl Default for HeroState {
-    fn default() -> Self { Self::placeholder() }
-}
 impl HeroState {
-    pub fn placeholder() -> Self {
-        Self {
-            title: "welcome home".to_string(),
-            description: "your cozy corner for anime — trending, seasonal, and whatever you’re in the mood for.".to_string(),
-            score: None, year: None, poster_url: None,
-        }
-    }
     pub fn from_anime(anime: &Anime) -> Self {
-        Self {
-            title: anime.title.clone(),
-            description: anime.description.clone().unwrap_or_else(|| "no description — just vibes.".to_string()),
-            score: anime.score, year: anime.year, poster_url: anime.cover_image.clone(),
-        }
+        Self { anime: Some(anime.clone()) }
+    }
+    pub fn poster_url(&self) -> Option<&str> {
+        self.anime.as_ref().and_then(|a| a.cover_image.as_deref())
     }
 }
 
-pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, posters: &PosterRenderer, theme: Theme) {
+/// Poster width (cells) that keeps a 2:3 cover undistorted at `height` rows
+/// (terminal cells are about twice as tall as wide).
+pub fn poster_width_for(height: u16) -> u16 {
+    height.saturating_mul(4) / 3
+}
+
+pub fn render(f: &mut Frame, hero: &HeroState, area: Rect, cache: &ImageCache, posters: &PosterRenderer, t: Theme) {
     let block = Block::default()
-        .borders(Borders::ALL).border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.border))
-        .style(Style::default().bg(theme.surface).fg(theme.text))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.surface).fg(t.text))
         .padding(Padding::horizontal(1));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if inner.width < 10 || inner.height < 3 { return; }
-
-    let cover_w = 16.min(inner.width / 4).max(12);
-    let text_area = Rect { x: inner.x + cover_w + 2, y: inner.y, width: inner.width.saturating_sub(cover_w + 2), height: inner.height };
-    let cover_area = Rect { x: inner.x, y: inner.y, width: cover_w, height: inner.height };
-
-    let rendered_image = hero.poster_url.as_deref().is_some_and(|u| posters.render(f, cover_area, u, cache));
-    if !rendered_image {
-        let cover_block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(theme.border))
-            .style(Style::default().bg(theme.surface_hover));
-        let cover_inner = cover_block.inner(cover_area);
-        f.render_widget(cover_block, cover_area);
-        let status = hero.poster_url.as_deref().map(|u| if cache.is_cached(u) { "● cached" } else { "○ loading…" }).unwrap_or("—");
-        let cover_text = Paragraph::new(vec![
-            Line::from(Span::raw("")),
-            Line::from(Span::styled("  ✦  cover  ✦  ", Style::default().fg(theme.text_dim).add_modifier(Modifier::ITALIC))),
-            Line::from(Span::styled(status, Style::default().fg(if status.contains('●') { theme.accent } else { theme.text_muted }))),
-            Line::from(Span::styled("  ───  ", Style::default().fg(theme.text_muted))),
-            Line::from(Span::styled("  cozy  ", Style::default().fg(theme.text_muted))),
-        ]).centered().style(Style::default().fg(theme.text_dim));
-        f.render_widget(cover_text, cover_inner);
+    if inner.width < 20 || inner.height < 3 {
+        return;
     }
 
-    let title_line = Line::from(vec![
-        Span::styled(hero.title.clone(), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(hero.year.map(|y| y.to_string()).unwrap_or_default(), Style::default().fg(theme.text_muted)),
-        Span::raw("  "),
-        Span::styled(hero.score.map(|s| format!("★ {s}")).unwrap_or_default(), Style::default().fg(theme.accent)),
-    ]);
-    let desc_raw = hero.description.replace('\n', " ").trim().to_string();
-    let desc_trim = if desc_raw.chars().count() > 220 { let mut s: String = desc_raw.chars().take(217).collect(); s.push('…'); s } else { desc_raw };
-    let desc_para = Paragraph::new(vec![
-        title_line,
-        Line::from(Span::styled("  ─────────────────────────────────────", Style::default().fg(theme.text_muted))),
-        Line::from(Span::styled(desc_trim, Style::default().fg(theme.text_dim))),
-        Line::from(Span::raw("")),
-        Line::from(Span::styled("  enter details  •  p play  •  / search", Style::default().fg(theme.text_muted).add_modifier(Modifier::ITALIC))),
-    ]).wrap(ratatui::widgets::Wrap { trim: true }).style(Style::default().bg(theme.surface));
-    f.render_widget(desc_para, text_area);
+    let Some(anime) = &hero.anime else {
+        let lines = vec![
+            Line::from(Span::styled("welcome home", Style::default().fg(t.accent).add_modifier(Modifier::BOLD))),
+            Line::from(""),
+            Line::from(Span::styled("trending, seasonal, and whatever you're in the mood for.", Style::default().fg(t.text_dim))),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
+        return;
+    };
+
+    let cover_w = poster_width_for(inner.height).clamp(8, inner.width / 3);
+    let cover = Rect { width: cover_w, ..inner };
+    let text = Rect { x: inner.x + cover_w + 2, width: inner.width.saturating_sub(cover_w + 2), ..inner };
+
+    let drew = hero.poster_url().is_some_and(|u| posters.render(f, cover, u, cache));
+    if !drew {
+        render_cover_placeholder(f, cover, hero.poster_url().is_some(), t);
+    }
+
+    let mut lines = vec![
+        Line::from(Span::styled(anime.title.clone(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD))),
+        meta::meta_line(anime, t),
+    ];
+    if !anime.genres.is_empty() {
+        lines.push(meta::genre_line(anime, t));
+    }
+    lines.push(Line::from(""));
+    let desc = anime.description.as_deref().unwrap_or("no description yet.").replace('\n', " ");
+    lines.push(Line::from(Span::styled(desc, Style::default().fg(t.text_dim))));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), text);
 }
 
+/// Framed box shown where a poster will appear (or "no cover" when there is none).
+pub fn render_cover_placeholder(f: &mut Frame, area: Rect, loading: bool, t: Theme) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(t.border))
+        .style(Style::default().bg(t.surface_hover));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+    let label = if loading { "loading…" } else { "no cover" };
+    let y = inner.y + inner.height / 2;
+    f.render_widget(
+        Paragraph::new(Span::styled(label, Style::default().fg(t.text_muted).add_modifier(Modifier::ITALIC))).centered(),
+        Rect { y, height: 1, ..inner },
+    );
+}

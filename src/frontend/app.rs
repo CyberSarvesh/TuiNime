@@ -10,6 +10,7 @@ use crate::frontend::widgets::poster::PosterRenderer;
 
 // re-export for `crate::frontend::app::AppView` compat (old import path)
 pub use crate::frontend::state::AppView;
+use crate::frontend::state::Status;
 
 pub const ROW_CONTINUE: usize = 0;
 pub const ROW_TRENDING: usize = 1;
@@ -24,7 +25,9 @@ pub struct App {
     pub carousels: Vec<CarouselState>,
     pub hero: HeroState,
     pub search_query: String,
-    pub status: String,
+    pub status: Status,
+    /// Frame counter driving spinners; advanced on every tick.
+    pub tick: u64,
     pub backend: MiruBackend,
     pub theme: Theme,
     pub posters: PosterRenderer,
@@ -43,17 +46,19 @@ pub struct App {
 impl App {
     pub fn new(posters: PosterRenderer) -> Self {
         let backend = MiruBackend::new();
-        let carousels = vec![
+        let mut carousels = vec![
             CarouselState::new("Continue Watching", vec![]),
             CarouselState::new(TRENDING_TITLE, vec![]),
             CarouselState::new("Popular This Season", vec![]),
         ];
+        carousels[ROW_TRENDING].loading = true;
+        carousels[ROW_SEASON].loading = true;
         let (bg_tx, bg_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             running: true, view: AppView::Browse,
             active_carousel: ROW_TRENDING, carousels, hero: HeroState::default(),
             search_query: String::new(),
-            status: "/ search • q quit • ←→ move • enter open".to_string(),
+            status: Status::info("welcome"), tick: 0,
             backend, theme: Theme::cozy(), posters, now_playing: None,
             trending: Vec::new(), resolving: None, search_seq: 0, bg_tx, bg_rx,
         }
@@ -64,11 +69,11 @@ impl App {
         let i = kinds.iter().position(|k| *k == self.theme.kind).unwrap_or(0);
         let next = kinds[(i + 1) % kinds.len()];
         self.theme = Theme::from_kind(next);
-        self.status = format!("theme → {}", self.theme.name());
+        self.status = Status::info(format!("theme → {}", self.theme.name()));
     }
 
     pub fn spawn_initial_fetch(&mut self) {
-        self.status = "brewing tea… loading trending".to_string();
+        self.status = Status::busy("loading trending…");
         services::spawn_trending(self.backend.catalog(), self.bg_tx.clone());
         services::spawn_seasonal(self.backend.catalog(), self.bg_tx.clone());
     }
@@ -86,16 +91,21 @@ impl App {
                     // don't clobber search results that arrived first
                     if row.title == TRENDING_TITLE { row.set_items(list); }
                 }
+                self.ensure_active_visible();
                 self.sync_hero();
-                self.status = "ready — h/l scroll • j/k switch rows".to_string();
+                self.status = Status::info("ready");
             }
             BgEvent::Seasonal { label, result } => {
                 if let Some(row) = self.carousels.get_mut(ROW_SEASON) {
                     match result {
                         Ok(list) => { row.title = format!("Popular This Season ({label})"); row.set_items(list); }
-                        Err(e) => { tracing::warn!("seasonal fetch failed: {e}"); }
+                        Err(e) => {
+                            tracing::warn!("seasonal fetch failed: {e}");
+                            row.set_items(Vec::new()); // stop the spinner; the empty row hides
+                        }
                     }
                 }
+                self.ensure_active_visible();
             }
             BgEvent::Search { seq, query, result } => {
                 if seq != self.search_seq { return; } // superseded by a newer search
@@ -108,9 +118,9 @@ impl App {
                         }
                         self.active_carousel = ROW_TRENDING;
                         self.sync_hero();
-                        self.status = format!("found {n} results for \"{query}\" • esc back to trending");
+                        self.status = Status::info(format!("found {n} results for \"{query}\" — esc for trending"));
                     }
-                    Err(e) => self.status = format!("search failed: {}", short(&e)),
+                    Err(e) => self.status = Status::error(format!("search failed: {}", short(&e))),
                 }
             }
             BgEvent::Resolved { anime, result } => {
@@ -122,14 +132,14 @@ impl App {
                             Ok(()) => {
                                 self.view = AppView::Player;
                                 self.now_playing = Some(anime.title.clone());
-                                self.status = "playing — esc to stop".to_string();
+                                self.status = Status::info(format!("playing {}", anime.title));
                                 self.add_continue_watching(anime);
                             }
-                            Err(e) => self.status = format!("mpv failed: {}", short(&format!("{e:#}"))),
+                            Err(e) => self.status = Status::error(format!("mpv failed: {}", short(&format!("{e:#}")))),
                         }
                     }
-                    Ok(_) => self.status = format!("no streams found for {}", anime.title),
-                    Err(e) => self.status = format!("couldn't get streams: {}", short(&e)),
+                    Ok(_) => self.status = Status::error(format!("no streams found for {}", anime.title)),
+                    Err(e) => self.status = Status::error(format!("couldn't get streams: {}", short(&e))),
                 }
             }
         }
@@ -161,26 +171,15 @@ impl App {
         match key.code {
             // `q` quits only from browse — in search it is a letter, in overlays it means "back"
             KeyCode::Char('q') => { self.running = false; }
-            KeyCode::Char('/') => {
-                self.view = AppView::Search;
-                self.status = "search — enter to go • esc to cancel".to_string();
-            }
-            KeyCode::Esc => {
-               
-                self.restore_trending();
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.active_carousel > 0 { self.active_carousel -= 1; self.sync_hero(); }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.active_carousel + 1 < self.carousels.len() { self.active_carousel += 1; self.sync_hero(); }
-            }
+            KeyCode::Char('/') => self.view = AppView::Search,
+            KeyCode::Esc => self.restore_trending(),
+            KeyCode::Up | KeyCode::Char('k') => self.move_row(false),
+            KeyCode::Down | KeyCode::Char('j') => self.move_row(true),
             KeyCode::Left | KeyCode::Char('h') => self.scroll(false),
             KeyCode::Right | KeyCode::Char('l') => self.scroll(true),
             KeyCode::Enter => {
                 if self.selected().is_some() {
                     self.view = AppView::Detail;
-                    self.status = "details — esc to go back • p to play".to_string();
                 }
             }
             KeyCode::Char('p') => self.play_selected(),
@@ -191,7 +190,7 @@ impl App {
 
     async fn on_key_detail(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => { self.view = AppView::Browse; self.status = "ready".to_string(); }
+            KeyCode::Esc | KeyCode::Char('q') => self.view = AppView::Browse,
             KeyCode::Char('p') => self.play_selected(),
             _ => {}
         }
@@ -205,10 +204,9 @@ impl App {
                 if q.is_empty() { return; }
                 self.search_seq += 1;
                 services::spawn_search(self.backend.catalog(), self.bg_tx.clone(), self.search_seq, q.clone());
-                self.status = format!("searching \"{q}\"…");
+                self.status = Status::busy(format!("searching \"{q}\"…"));
                 self.search_query.clear();
                 self.view = AppView::Browse;
-               
             }
             KeyCode::Backspace => { self.search_query.pop(); }
             KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
@@ -223,7 +221,7 @@ impl App {
             let _ = self.backend.player_mut().stop().await;
             self.now_playing = None;
             self.view = AppView::Browse;
-            self.status = "stopped".to_string();
+            self.status = Status::info("stopped");
         }
     }
 
@@ -238,11 +236,12 @@ impl App {
     }
 
     pub async fn on_tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
         // mpv closed on its own (window closed / episode ended) → leave the player overlay
         if let Ok(true) = self.backend.player_mut().poll().await {
             if self.view == AppView::Player {
                 self.view = AppView::Browse;
-                self.status = "playback finished".to_string();
+                self.status = Status::info("playback finished");
             }
             self.now_playing = None;
         }
@@ -261,7 +260,43 @@ impl App {
                 row.title = TRENDING_TITLE.to_string();
                 row.set_items(self.trending.clone());
                 self.sync_hero();
-                self.status = "back to trending".to_string();
+                self.status = Status::info("back to trending");
+            }
+        }
+    }
+
+    /// Rows worth drawing: anything with items or still loading. "Continue Watching" only
+    /// appears once something has been played.
+    pub fn visible_rows(&self) -> Vec<usize> {
+        (0..self.carousels.len())
+            .filter(|&i| {
+                let c = &self.carousels[i];
+                !c.items.is_empty() || (c.loading && i != ROW_CONTINUE)
+            })
+            .collect()
+    }
+
+    /// Move to the next/previous visible row.
+    fn move_row(&mut self, down: bool) {
+        let rows = self.visible_rows();
+        let Some(pos) = rows.iter().position(|r| *r == self.active_carousel) else {
+            self.ensure_active_visible();
+            return;
+        };
+        let next = if down { rows.get(pos + 1) } else { pos.checked_sub(1).and_then(|p| rows.get(p)) };
+        if let Some(&r) = next {
+            self.active_carousel = r;
+            self.sync_hero();
+        }
+    }
+
+    /// If the active row was hidden (e.g. it came back empty), jump to the first visible one.
+    fn ensure_active_visible(&mut self) {
+        let rows = self.visible_rows();
+        if !rows.contains(&self.active_carousel) {
+            if let Some(&r) = rows.first() {
+                self.active_carousel = r;
+                self.sync_hero();
             }
         }
     }
@@ -273,20 +308,20 @@ impl App {
     fn sync_hero(&mut self) {
         if let Some(anime) = self.selected() {
             self.hero = HeroState::from_anime(anime);
-            if let Some(u) = &self.hero.poster_url { self.backend.cache.prefetch(u.clone()); }
+            if let Some(u) = self.hero.poster_url() { self.backend.cache.prefetch(u.to_string()); }
         }
     }
 
     fn play_selected(&mut self) {
         let Some(anime) = self.selected().cloned() else {
-            self.status = "nothing selected".to_string();
+            self.status = Status::error("nothing selected");
             return;
         };
         if let Some(t) = &self.resolving {
-            self.status = format!("still looking up streams for {t}…");
+            self.status = Status::busy(format!("still looking up streams for {t}…"));
             return;
         }
-        self.status = format!("looking up streams for {}…", anime.title);
+        self.status = Status::busy(format!("looking up streams for {}…", anime.title));
         self.resolving = Some(anime.title.clone());
         services::spawn_resolve(self.backend.catalog(), self.bg_tx.clone(), anime);
     }

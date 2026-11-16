@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let picker = ratatui_image::picker::Picker::from_query_stdio()
         .unwrap_or_else(|_| ratatui_image::picker::Picker::from_fontsize((8, 16)));
     let mut app = App::new(frontend::widgets::poster::PosterRenderer::new(picker));
-    let mut events = EventHandler::new(500);
+    let mut events = EventHandler::new(120);
     app.spawn_initial_fetch();
 
     // race the app loop vs OS SIGINT (Ctrl+C) so a jammed/throttled task can't block exit
