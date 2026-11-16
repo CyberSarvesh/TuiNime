@@ -5,14 +5,16 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::backend::{Anime, Catalog, StreamSource};
+use crate::backend::{Anime, Catalog, EpisodeList, Episode, StreamSource};
 
 /// Results delivered from background tasks to `App::on_background`.
 pub enum BgEvent {
     Trending(Vec<Anime>),
     Seasonal { label: String, result: Result<Vec<Anime>, String> },
     Search { seq: u64, query: String, result: Result<Vec<Anime>, String> },
-    Resolved { anime: Anime, result: Result<Vec<StreamSource>, String> },
+    Episodes { anime_id: String, dub: bool, result: Result<EpisodeList, String> },
+    /// Streams for `anime` (and which episode, when one was picked) are ready to play.
+    Resolved { anime: Anime, episode: Option<String>, result: Result<Vec<StreamSource>, String> },
 }
 
 pub fn spawn_trending(catalog: Catalog, tx: UnboundedSender<BgEvent>) {
@@ -38,10 +40,27 @@ pub fn spawn_search(catalog: Catalog, tx: UnboundedSender<BgEvent>, seq: u64, qu
     });
 }
 
+/// Streams for episode 1 (what `p` plays from browse).
 pub fn spawn_resolve(catalog: Catalog, tx: UnboundedSender<BgEvent>, anime: Anime) {
     tokio::spawn(async move {
         let result = catalog.resolve(&anime).await.map_err(|e| format!("{e:#}"));
-        let _ = tx.send(BgEvent::Resolved { anime, result });
+        let _ = tx.send(BgEvent::Resolved { anime, episode: None, result });
+    });
+}
+
+/// Episode list for the details screen.
+pub fn spawn_episodes(catalog: Catalog, tx: UnboundedSender<BgEvent>, anime: Anime, dub: bool) {
+    tokio::spawn(async move {
+        let result = catalog.episodes(&anime).await.map_err(|e| format!("{e:#}"));
+        let _ = tx.send(BgEvent::Episodes { anime_id: anime.id, dub, result });
+    });
+}
+
+/// Streams for one chosen episode.
+pub fn spawn_play_episode(catalog: Catalog, tx: UnboundedSender<BgEvent>, anime: Anime, provider: usize, episode: Episode) {
+    tokio::spawn(async move {
+        let result = catalog.streams(provider, &episode.id).await.map_err(|e| format!("{e:#}"));
+        let _ = tx.send(BgEvent::Resolved { anime, episode: Some(episode.label), result });
     });
 }
 

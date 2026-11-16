@@ -19,13 +19,6 @@ pub fn centered(area: Rect, w: u16, h: u16) -> Rect {
     }
 }
 
-/// A rect covering `pct_w`% × `pct_h`% of `area`, centered.
-pub fn centered_pct(area: Rect, pct_w: u16, pct_h: u16) -> Rect {
-    let w = (area.width as u32 * pct_w.min(100) as u32 / 100) as u16;
-    let h = (area.height as u32 * pct_h.min(100) as u32 / 100) as u16;
-    centered(area, w, h)
-}
-
 /// Popup shell: clears `area`, draws a rounded themed border with `title` in `accent`,
 /// and returns the inner rect for content.
 pub fn popup(f: &mut Frame, area: Rect, theme: Theme, title: &str, accent: Color) -> Rect {
@@ -52,6 +45,5 @@ mod tests {
         let area = Rect::new(0, 0, 10, 4);
         assert_eq!(centered(area, 20, 20), area);
         assert_eq!(centered(area, 4, 2), Rect::new(3, 1, 4, 2));
-        assert_eq!(centered_pct(Rect::new(0, 0, 100, 50), 50, 50), Rect::new(25, 12, 50, 25));
     }
 }

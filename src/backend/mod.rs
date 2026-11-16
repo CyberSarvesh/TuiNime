@@ -5,8 +5,8 @@ pub mod providers;
 
 pub use cache::ImageCache;
 pub use player::MpvPlayer;
-pub use providers::traits::{Anime, StreamSource};
-pub use providers::aggregator::ProviderAggregator;
+pub use providers::traits::{Anime, Episode, StreamSource};
+pub use providers::aggregator::{EpisodeList, ProviderAggregator};
 pub use providers::anilist::AniListClient;
 pub use providers::allanime::AllAnimeProvider;
 pub use providers::scraper::ScraperProvider;
@@ -84,6 +84,19 @@ impl Catalog {
 
     pub async fn resolve(&self, anime: &Anime) -> Result<Vec<StreamSource>> {
         self.aggregator.resolve_for_anime(anime).await
+    }
+
+    pub async fn episodes(&self, anime: &Anime) -> Result<EpisodeList> {
+        self.aggregator.episodes_for(anime).await
+    }
+
+    pub async fn streams(&self, provider: usize, episode_id: &str) -> Result<Vec<StreamSource>> {
+        self.aggregator.streams_for(provider, episode_id).await
+    }
+
+    /// Subtitled (`false`) or dubbed (`true`) listings from now on.
+    pub fn set_dub(&self, dub: bool) {
+        self.aggregator.set_dub(dub);
     }
 }
 

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde_json::json;
@@ -25,19 +27,24 @@ const ALLANIME_REFR: &str = "https://allanime.to";
 const ALLANIME_BASE: &str = "allanime.day";
 const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-#[derive(Clone)]
 pub struct AllAnimeProvider {
     client: reqwest::Client,
-    mode: String, // "sub" or "dub"
+    /// `false` = subtitled listings, `true` = dubbed.
+    dub: AtomicBool,
 }
 
 impl AllAnimeProvider {
     pub fn new() -> Self {
         Self {
             client: super::http_client(BROWSER_UA),
-            mode: "sub".to_string(),
+            dub: AtomicBool::new(false),
         }
     }
+    /// AllAnime's `translationType`: "sub" or "dub".
+    fn mode(&self) -> &'static str {
+        if self.dub.load(Ordering::Relaxed) { "dub" } else { "sub" }
+    }
+
     /// Decode an AllAnime `--<hex>` source URL.
     ///
     /// ani-cli's long sed table is just every byte XOR `0x38` (e.g. `01` → `'9'` = 0x39).
@@ -78,7 +85,7 @@ impl AnimeProvider for AllAnimeProvider {
             "search": {"allowAdult": false, "allowUnknown": false, "query": query},
             "limit": limit as i32,
             "page": 1,
-            "translationType": self.mode,
+            "translationType": self.mode(),
             "countryOrigin": "ALL"
         });
         let resp = self.client.post(ALLANIME_API)
@@ -97,7 +104,7 @@ impl AnimeProvider for AllAnimeProvider {
             let id = e.get("_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
             if id.is_empty() { continue; }
             let name = e.get("name").and_then(|x| x.as_str()).unwrap_or("Untitled").to_string();
-            let avail = e.get("availableEpisodes").and_then(|x| x.get(&self.mode)).and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let avail = e.get("availableEpisodes").and_then(|x| x.get(self.mode())).and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             out.push(Anime {
                 id,
                 title: name,
@@ -127,23 +134,19 @@ impl AnimeProvider for AllAnimeProvider {
         }
         let v: serde_json::Value = resp.json().await?;
         // availableEpisodesDetail: { sub: ["1","2",…], dub: […] }
-        let arr = v.pointer(&format!("/data/show/availableEpisodesDetail/{}", self.mode))
+        let arr = v.pointer(&format!("/data/show/availableEpisodesDetail/{}", self.mode()))
             .and_then(|x| x.as_array()).cloned().unwrap_or_default();
-        let mut eps = Vec::new();
-        for val in arr {
-            let num_str = val.as_str().unwrap_or("").to_string();
-            if let Ok(num) = num_str.parse::<f32>() {
-                let n = num as u32;
-                eps.push(Episode {
-                    id: format!("{}:{}", anime_id, num_str),
-                    number: n,
-                    title: None,
-                    thumbnail: None,
-                });
-            }
-        }
-        eps.sort_by_key(|e| e.number);
-        Ok(eps)
+        let mut eps: Vec<(f32, Episode)> = arr
+            .iter()
+            .filter_map(|val| {
+                let label = val.as_str()?.to_string();
+                let num = label.parse::<f32>().ok()?;
+                Some((num, Episode { id: format!("{anime_id}:{label}"), number: num as u32, label, title: None, thumbnail: None }))
+            })
+            .collect();
+        // sort by the real number so recaps like "12.5" land between 12 and 13
+        eps.sort_by(|a, b| a.0.total_cmp(&b.0));
+        Ok(eps.into_iter().map(|(_, e)| e).collect())
     }
 
     async fn streams(&self, episode_id: &str) -> Result<Vec<StreamSource>> {
@@ -158,7 +161,7 @@ impl AnimeProvider for AllAnimeProvider {
         let gql = r#"query($showId: String! $translationType: VaildTranslationTypeEnumType! $episodeString: String!){episode(showId: $showId translationType: $translationType episodeString: $episodeString){episodeString sourceUrls}}"#;
         let resp = self.client.post(ALLANIME_API)
             .header("Referer", ALLANIME_REFR)
-            .json(&json!({"query": gql, "variables": {"showId": show_id, "translationType": self.mode, "episodeString": ep_str}}))
+            .json(&json!({"query": gql, "variables": {"showId": show_id, "translationType": self.mode(), "episodeString": ep_str}}))
             .send().await.context("allanime episode")?;
 
         let v: serde_json::Value = resp.json().await?;
@@ -197,6 +200,10 @@ impl AnimeProvider for AllAnimeProvider {
         // sort by quality desc if present
         sources.sort_by_key(|s| std::cmp::Reverse(quality_rank(s.quality.as_deref())));
         Ok(sources)
+    }
+
+    fn set_dub(&self, dub: bool) {
+        self.set_dub_mode(dub);
     }
 }
 
@@ -270,6 +277,12 @@ fn extract_json_field(s: &str, field: &str) -> Option<String> {
     let rest = &s[start..];
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
+}
+
+impl AllAnimeProvider {
+    fn set_dub_mode(&self, dub: bool) {
+        self.dub.store(dub, Ordering::Relaxed);
+    }
 }
 
 impl Default for AllAnimeProvider {

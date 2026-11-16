@@ -10,7 +10,7 @@ use crate::frontend::widgets::poster::PosterRenderer;
 
 // re-export for `crate::frontend::app::AppView` compat (old import path)
 pub use crate::frontend::state::AppView;
-use crate::frontend::state::Status;
+use crate::frontend::state::{DetailState, Episodes, Status};
 
 pub const ROW_CONTINUE: usize = 0;
 pub const ROW_TRENDING: usize = 1;
@@ -33,6 +33,12 @@ pub struct App {
     pub posters: PosterRenderer,
     /// Title of what mpv is currently playing (shown in the player overlay).
     pub now_playing: Option<String>,
+    /// The show open on the details screen.
+    pub detail: Option<DetailState>,
+    /// Dubbed (`true`) or subtitled (`false`) episode listings.
+    pub dub: bool,
+    /// Screen to return to when playback stops.
+    pub player_return: AppView,
     /// Trending list kept aside while search results occupy its row (Esc restores it).
     trending: Vec<Anime>,
     /// Show whose streams are being looked up, so repeated `p` presses don't stack requests.
@@ -60,6 +66,7 @@ impl App {
             search_query: String::new(),
             status: Status::info("welcome"), tick: 0,
             backend, theme: Theme::cozy(), posters, now_playing: None,
+            detail: None, dub: false, player_return: AppView::Browse,
             trending: Vec::new(), resolving: None, search_seq: 0, bg_tx, bg_rx,
         }
     }
@@ -123,16 +130,40 @@ impl App {
                     Err(e) => self.status = Status::error(format!("search failed: {}", short(&e))),
                 }
             }
-            BgEvent::Resolved { anime, result } => {
+            BgEvent::Episodes { anime_id, dub, result } => {
+                let Some(d) = self.detail.as_mut() else { return };
+                if d.anime.id != anime_id || dub != self.dub {
+                    return; // the user moved on to another show or language
+                }
+                d.selected = 0;
+                d.episodes = match result {
+                    Ok(list) => {
+                        self.status = Status::info(format!("{} episodes ({})", list.episodes.len(), if dub { "dub" } else { "sub" }));
+                        Episodes::Loaded(list)
+                    }
+                    Err(e) => {
+                        self.status = Status::error(format!("couldn't load episodes: {}", short(&e)));
+                        Episodes::Failed(short(&e))
+                    }
+                };
+            }
+            BgEvent::Resolved { anime, episode, result } => {
                 self.resolving = None;
+                let title = match &episode {
+                    Some(ep) => format!("{} — episode {ep}", anime.title),
+                    None => anime.title.clone(),
+                };
                 match result {
                     Ok(src) if !src.is_empty() => {
                         // sources arrive sorted best-quality first
-                        match self.backend.player_mut().play(&src[0], &anime.title).await {
+                        match self.backend.player_mut().play(&src[0], &title).await {
                             Ok(()) => {
+                                if self.view != AppView::Player {
+                                    self.player_return = self.view;
+                                }
                                 self.view = AppView::Player;
-                                self.now_playing = Some(anime.title.clone());
-                                self.status = Status::info(format!("playing {}", anime.title));
+                                self.now_playing = Some(title.clone());
+                                self.status = Status::info(format!("playing {title}"));
                                 self.add_continue_watching(anime);
                             }
                             Err(e) => self.status = Status::error(format!("mpv failed: {}", short(&format!("{e:#}")))),
@@ -178,8 +209,8 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') => self.scroll(false),
             KeyCode::Right | KeyCode::Char('l') => self.scroll(true),
             KeyCode::Enter => {
-                if self.selected().is_some() {
-                    self.view = AppView::Detail;
+                if let Some(anime) = self.selected().cloned() {
+                    self.open_detail(anime);
                 }
             }
             KeyCode::Char('p') => self.play_selected(),
@@ -189,11 +220,69 @@ impl App {
     }
 
     async fn on_key_detail(&mut self, key: KeyEvent) {
+        let Some(d) = self.detail.as_mut() else {
+            self.view = AppView::Browse;
+            return;
+        };
+        let cols = d.grid_cols.get().max(1) as isize;
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => self.view = AppView::Browse,
-            KeyCode::Char('p') => self.play_selected(),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => self.view = AppView::Browse,
+            KeyCode::Left | KeyCode::Char('h') => d.move_by(-1),
+            KeyCode::Right | KeyCode::Char('l') => d.move_by(1),
+            KeyCode::Up | KeyCode::Char('k') => d.move_by(-cols),
+            KeyCode::Down | KeyCode::Char('j') => d.move_by(cols),
+            KeyCode::PageUp => d.move_by(-cols * 5),
+            KeyCode::PageDown => d.move_by(cols * 5),
+            KeyCode::Home | KeyCode::Char('g') => d.selected = 0,
+            KeyCode::End | KeyCode::Char('G') => d.selected = d.episode_count().saturating_sub(1),
+            KeyCode::Char(']') => d.desc_scroll = (d.desc_scroll + 1).min(d.desc_max.get()),
+            KeyCode::Char('[') => d.desc_scroll = d.desc_scroll.min(d.desc_max.get()).saturating_sub(1),
+            KeyCode::Char('s') => {
+                self.dub = !self.dub;
+                self.backend.catalog().set_dub(self.dub);
+                self.status = Status::busy(format!("switched to {} — loading episodes…", if self.dub { "dub" } else { "sub" }));
+                self.reload_episodes();
+            }
+            KeyCode::Char('r') if matches!(d.episodes, Episodes::Failed(_)) => self.reload_episodes(),
+            KeyCode::Enter | KeyCode::Char('p') => self.play_detail_episode(),
             _ => {}
         }
+    }
+
+    /// Open the details screen for `anime` and start loading its episodes.
+    fn open_detail(&mut self, anime: Anime) {
+        if let Some(u) = &anime.cover_image {
+            self.backend.cache.prefetch(u.clone());
+        }
+        self.detail = Some(DetailState::new(anime));
+        self.view = AppView::Detail;
+        self.reload_episodes();
+    }
+
+    fn reload_episodes(&mut self) {
+        if let Some(d) = self.detail.as_mut() {
+            d.episodes = Episodes::Loading;
+            d.selected = 0;
+            services::spawn_episodes(self.backend.catalog(), self.bg_tx.clone(), d.anime.clone(), self.dub);
+        }
+    }
+
+    /// Play the highlighted episode on the details screen.
+    fn play_detail_episode(&mut self) {
+        let Some(d) = &self.detail else { return };
+        let Episodes::Loaded(list) = &d.episodes else {
+            self.status = Status::error("no episodes to play yet");
+            return;
+        };
+        let Some(ep) = list.episodes.get(d.selected).cloned() else { return };
+        if let Some(t) = &self.resolving {
+            self.status = Status::busy(format!("still looking up streams for {t}…"));
+            return;
+        }
+        let label = format!("{} episode {}", d.anime.title, ep.label);
+        self.status = Status::busy(format!("looking up streams for {label}…"));
+        self.resolving = Some(label);
+        services::spawn_play_episode(self.backend.catalog(), self.bg_tx.clone(), d.anime.clone(), list.provider, ep);
     }
 
     fn on_key_search(&mut self, key: KeyEvent) {
@@ -220,7 +309,7 @@ impl App {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
             let _ = self.backend.player_mut().stop().await;
             self.now_playing = None;
-            self.view = AppView::Browse;
+            self.view = self.player_return;
             self.status = Status::info("stopped");
         }
     }
@@ -240,7 +329,7 @@ impl App {
         // mpv closed on its own (window closed / episode ended) → leave the player overlay
         if let Ok(true) = self.backend.player_mut().poll().await {
             if self.view == AppView::Player {
-                self.view = AppView::Browse;
+                self.view = self.player_return;
                 self.status = Status::info("playback finished");
             }
             self.now_playing = None;

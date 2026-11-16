@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::traits::{Anime, AnimeProvider, MetadataProvider, StreamSource};
+use super::traits::{Anime, AnimeProvider, Episode, MetadataProvider, StreamSource};
 
 /// Multi-provider resolution manager with automatic failover.
 ///
@@ -55,19 +55,26 @@ where
 
     // --- Stream resolution with failover ---
 
+    /// Subtitled or dubbed listings for every provider.
+    pub fn set_dub(&self, dub: bool) {
+        for p in &self.stream_providers {
+            p.set_dub(dub);
+        }
+    }
+
     /// ani-cli style: search each provider by title → pick the best-matching show →
-    /// episode list → stream links for episode 1.
+    /// its episode list. The first provider that yields episodes wins.
     ///
     /// AniList ids mean nothing to stream providers, so we only search by name. The English
     /// title is tried first, then the alternate (romaji/native) titles, because providers
     /// like AllAnime usually list shows under romaji.
-    pub async fn resolve_for_anime(&self, anime: &Anime) -> Result<Vec<StreamSource>> {
+    pub async fn episodes_for(&self, anime: &Anime) -> Result<EpisodeList> {
         let mut names: Vec<&str> = vec![anime.title.as_str()];
         names.extend(anime.alt_titles.iter().map(String::as_str));
         names.dedup();
 
         let mut last_err: Option<anyhow::Error> = None;
-        for provider in &self.stream_providers {
+        for (index, provider) in self.stream_providers.iter().enumerate() {
             let mut chosen: Option<Anime> = None;
             let mut first_hit: Option<Anime> = None;
             for query in &names {
@@ -85,27 +92,45 @@ where
                 }
             }
             let Some(show) = chosen.or(first_hit) else { continue };
-
-            let eps = match provider.episodes(&show.id).await {
-                Ok(eps) if !eps.is_empty() => eps,
-                Ok(_) => {
-                    last_err = Some(anyhow::anyhow!("no episodes listed for {}", show.title));
-                    continue;
+            match provider.episodes(&show.id).await {
+                Ok(episodes) if !episodes.is_empty() => {
+                    return Ok(EpisodeList { provider: index, show: show.title, episodes });
                 }
-                Err(e) => {
-                    last_err = Some(e);
-                    continue;
-                }
-            };
-            match provider.streams(&eps[0].id).await {
-                Ok(src) if !src.is_empty() => return Ok(src),
-                Ok(_) => last_err = Some(anyhow::anyhow!("no streams for {}", show.title)),
+                Ok(_) => last_err = Some(anyhow::anyhow!("no episodes listed for {}", show.title)),
                 Err(e) => last_err = Some(e),
             }
         }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no stream provider found {}", anime.title)))
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no stream provider has {}", anime.title)))
     }
 
+    /// Stream links for one episode from the provider that listed it.
+    pub async fn streams_for(&self, provider: usize, episode_id: &str) -> Result<Vec<StreamSource>> {
+        let p = self
+            .stream_providers
+            .get(provider)
+            .ok_or_else(|| anyhow::anyhow!("stream provider {provider} is not available"))?;
+        let sources = p.streams(episode_id).await?;
+        if sources.is_empty() {
+            anyhow::bail!("no playable links for this episode");
+        }
+        Ok(sources)
+    }
+
+    /// Streams for episode 1 — what `p` plays straight from browse.
+    pub async fn resolve_for_anime(&self, anime: &Anime) -> Result<Vec<StreamSource>> {
+        let list = self.episodes_for(anime).await?;
+        self.streams_for(list.provider, &list.episodes[0].id).await
+    }
+}
+
+/// A show's episodes as listed by one stream provider.
+#[derive(Debug, Clone)]
+pub struct EpisodeList {
+    /// Index of the provider that listed them (pass back to `streams_for`).
+    pub provider: usize,
+    /// The provider's name for the show (may differ from the AniList title).
+    pub show: String,
+    pub episodes: Vec<Episode>,
 }
 
 /// Lowercase, keep only letters/digits, collapse everything else to single spaces.
@@ -184,5 +209,32 @@ mod tests {
     #[test]
     fn no_match_returns_none() {
         assert!(best_match(&["Bleach"], &[show("One Piece", 1000)]).is_none());
+    }
+}
+
+/// Live checks against the real services. Run with `cargo test -- --ignored`.
+#[cfg(test)]
+mod live {
+    use super::*;
+    use crate::backend::{AllAnimeProvider, AniListClient};
+
+    #[tokio::test]
+    #[ignore = "network"]
+    async fn finds_frieren_episodes_by_romaji_title() {
+        let mut agg = ProviderAggregator::new(AniListClient::new());
+        agg.add_provider(AllAnimeProvider::new());
+        let anime = Anime {
+            id: "154587".into(), title: "Frieren: Beyond Journey's End".into(), description: None,
+            cover_image: None, banner_image: None, score: None, year: None, episodes: Some(28),
+            status: None, genres: vec![], alt_titles: vec!["Sousou no Frieren".into()],
+        };
+        let list = agg.episodes_for(&anime).await.expect("episodes");
+        println!("listed as {:?}: {} episodes, first {:?}", list.show, list.episodes.len(), list.episodes.first().map(|e| &e.label));
+        assert_eq!(list.show, "Sousou no Frieren");
+        assert!(list.episodes.len() >= 28);
+        assert_eq!(list.episodes[0].label, "1");
+        agg.set_dub(true);
+        let dub = agg.episodes_for(&anime).await.expect("dub episodes");
+        println!("dub: {} episodes", dub.episodes.len());
     }
 }

@@ -124,15 +124,15 @@ impl AnimeProvider for ScraperProvider {
         Ok(eps
             .into_iter()
             .enumerate()
-            .map(|(i, e)| Episode {
+            .map(|(i, e)| {
+                let number = e.get("number").and_then(|x| x.as_u64()).unwrap_or(i as u64 + 1) as u32;
+                Episode {
                 id: e.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                number: e
-                    .get("number")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(i as u64 + 1) as u32,
+                number,
+                label: number.to_string(),
                 title: e.get("title").and_then(|x| x.as_str()).map(|s| s.to_string()),
                 thumbnail: None,
-            })
+            }})
             .collect())
     }
 

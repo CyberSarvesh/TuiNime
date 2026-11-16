@@ -25,6 +25,8 @@ pub struct Anime {
 pub struct Episode {
     pub id: String,
     pub number: u32,
+    /// The provider's own episode string, e.g. "12" or "12.5" for a recap.
+    pub label: String,
     pub title: Option<String>,
     pub thumbnail: Option<String>,
 }
@@ -45,6 +47,8 @@ pub trait AnimeProvider: Send + Sync {
     async fn search(&self, query: &str, limit: u8) -> Result<Vec<Anime>>;
     async fn episodes(&self, anime_id: &str) -> Result<Vec<Episode>>;
     async fn streams(&self, episode_id: &str) -> Result<Vec<StreamSource>>;
+    /// Switch between subtitled and dubbed listings (providers without the concept ignore it).
+    fn set_dub(&self, _dub: bool) {}
 }
 
 /// Provider that supplies metadata (AniList, MAL, etc.).

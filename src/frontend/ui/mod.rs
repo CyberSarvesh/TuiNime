@@ -29,12 +29,16 @@ pub fn render(f: &mut Frame, app: &App) {
     let body = Rect { y: area.y + 1, height: area.height - 2, ..area };
 
     render_header(f, app, header, t);
-    screens::browse::render(f, app, body, t);
+    // full-screen base: the player popup sits over whichever screen started playback
+    let base = if app.view == AppView::Player { app.player_return } else { app.view };
+    match base {
+        AppView::Detail => screens::detail::render(f, app, body, t),
+        _ => screens::browse::render(f, app, body, t),
+    }
     match app.view {
         AppView::Search => screens::search::render(f, app, body, t),
-        AppView::Detail => screens::detail::render(f, app, body, t),
         AppView::Player => screens::player::render(f, app, body, t),
-        AppView::Browse => {}
+        AppView::Browse | AppView::Detail => {}
     }
     render_footer(f, app, footer, t);
 }
@@ -64,7 +68,7 @@ fn view_name(v: AppView) -> &'static str {
 pub fn hints(v: AppView) -> &'static str {
     match v {
         AppView::Browse => "←→ move  ↑↓ rows  ⏎ details  p play  / search  t theme  q quit",
-        AppView::Detail => "p play  esc back",
+        AppView::Detail => "←↑↓→ episode  ⏎ play  s sub/dub  [ ] scroll text  esc back",
         AppView::Search => "⏎ search  esc cancel",
         AppView::Player => "esc stop",
     }
@@ -199,6 +203,108 @@ mod screen_tests {
         let a = loaded_app().await;
         for w in [1, 2, 5, 10, 20, 33, 60, 80, 120, 250] {
             for h in [1, 2, 3, 5, 8, 12, 19, 20, 24, 40, 80] {
+                draw(&a, w, h);
+            }
+        }
+    }
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crate::backend::{Episode, EpisodeList};
+    use crate::frontend::app::AppView;
+    use crate::frontend::state::Episodes;
+
+    fn key(c: KeyCode) -> KeyEvent {
+        KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    fn episodes(n: u32) -> EpisodeList {
+        EpisodeList {
+            provider: 0,
+            show: "Trending Show Zero (romaji)".into(),
+            episodes: (1..=n)
+                .map(|i| Episode { id: format!("x:{i}"), number: i, label: i.to_string(), title: None, thumbnail: None })
+                .collect(),
+        }
+    }
+
+    async fn detail_app(n: u32) -> crate::frontend::app::App {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Enter)).await;
+        let id = a.detail.as_ref().unwrap().anime.id.clone();
+        a.on_background(BgEvent::Episodes { anime_id: id, dub: false, result: Ok(episodes(n)) }).await;
+        a
+    }
+
+    #[tokio::test]
+    async fn enter_opens_details_and_shows_loading() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Enter)).await;
+        assert_eq!(a.view, AppView::Detail);
+        let s = draw(&a, 120, 36);
+        show("details while loading episodes (120x36)", &s);
+        assert!(s.contains("Trending Show 0"));
+        assert!(s.contains("finding episodes…"));
+        assert!(s.contains("episodes · sub"));
+    }
+
+    #[tokio::test]
+    async fn details_episode_grid_and_keys() {
+        let mut a = detail_app(30).await;
+        let s = draw(&a, 120, 36);
+        show("details with 30 episodes (120x36)", &s);
+        assert!(s.contains("episodes · sub · 30"));
+        assert!(s.contains("▶ episode 1"));
+        assert!(s.contains("listed as Trending Show Zero (romaji)"));
+        assert!(s.contains("⏎ play"));
+
+        a.on_key(key(KeyCode::Right)).await;
+        assert_eq!(a.detail.as_ref().unwrap().selected, 1);
+        let cols = a.detail.as_ref().unwrap().grid_cols.get();
+        assert!(cols > 1, "grid should have several columns at 120 wide");
+        a.on_key(key(KeyCode::Down)).await;
+        assert_eq!(a.detail.as_ref().unwrap().selected, 1 + cols);
+        a.on_key(key(KeyCode::End)).await;
+        assert!(draw(&a, 120, 36).contains("▶ episode 30"));
+        a.on_key(key(KeyCode::Down)).await; // already at the end: stays put
+        assert_eq!(a.detail.as_ref().unwrap().selected, 29);
+
+        a.on_key(key(KeyCode::Esc)).await;
+        assert_eq!(a.view, AppView::Browse);
+    }
+
+    #[tokio::test]
+    async fn switching_to_dub_reloads_and_ignores_stale_results() {
+        let mut a = detail_app(12).await;
+        a.on_key(key(KeyCode::Char('s'))).await;
+        assert!(a.dub);
+        assert!(matches!(a.detail.as_ref().unwrap().episodes, Episodes::Loading));
+        // a late "sub" answer must not replace the pending "dub" list
+        let id = a.detail.as_ref().unwrap().anime.id.clone();
+        a.on_background(BgEvent::Episodes { anime_id: id.clone(), dub: false, result: Ok(episodes(12)) }).await;
+        assert!(matches!(a.detail.as_ref().unwrap().episodes, Episodes::Loading));
+        a.on_background(BgEvent::Episodes { anime_id: id, dub: true, result: Ok(episodes(5)) }).await;
+        assert_eq!(a.detail.as_ref().unwrap().episode_count(), 5);
+        assert!(draw(&a, 120, 36).contains("episodes · dub · 5"));
+    }
+
+    #[tokio::test]
+    async fn details_failure_message() {
+        let mut a = loaded_app().await;
+        a.on_key(key(KeyCode::Enter)).await;
+        let id = a.detail.as_ref().unwrap().anime.id.clone();
+        a.on_background(BgEvent::Episodes { anime_id: id, dub: false, result: Err("no stream provider has Trending Show 0".into()) }).await;
+        let s = draw(&a, 100, 30);
+        show("details when episodes fail (100x30)", &s);
+        assert!(s.contains("couldn't load episodes"));
+        assert!(s.contains("r to retry"));
+        assert!(s.contains("✗ couldn't load episodes"));
+    }
+
+    #[tokio::test]
+    async fn details_any_size_renders_without_panicking() {
+        let a = detail_app(200).await;
+        for w in [1, 5, 20, 40, 69, 70, 100, 200] {
+            for h in [1, 3, 6, 10, 20, 50] {
                 draw(&a, w, h);
             }
         }
