@@ -98,7 +98,11 @@ impl ImageCache {
             }
         }
         let bytes = self.download(url).await?;
-        let _ = tokio::fs::write(&path, &bytes).await;
+        // write to a temp file then rename, so the render thread never decodes a half-written poster
+        let tmp = path.with_extension(format!("part-{}", uuid::Uuid::new_v4()));
+        if tokio::fs::write(&tmp, &bytes).await.is_ok() && tokio::fs::rename(&tmp, &path).await.is_err() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+        }
         self.memory.lock().await.insert(url.to_string(), bytes.clone());
         Ok(bytes)
     }
