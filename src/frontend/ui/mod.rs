@@ -2,6 +2,8 @@
 //! All colors come from `app.theme`.
 
 pub mod carousel;
+#[cfg(test)]
+mod demo;
 pub mod hero;
 
 use ratatui::{
