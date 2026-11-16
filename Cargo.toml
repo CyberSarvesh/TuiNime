@@ -2,12 +2,17 @@
 name = "tuinime"
 version = "0.1.0"
 edition = "2021"
-description = "TuiNime — media-first, Netflix-style TUI anime streaming application (miru)"
+description = "Browse and stream anime from your terminal: posters, search, episode lists, and playback in mpv"
 authors = ["TuiNime contributors"]
 license = "MIT"
-repository = "https://github.com/miru/miru"
+repository = "https://github.com/CyberSarvesh/TuiNime"
+homepage = "https://github.com/CyberSarvesh/TuiNime"
+readme = "README.md"
 keywords = ["tui", "anime", "streaming", "ratatui", "mpv"]
-categories = ["command-line-interface", "multimedia"]
+categories = ["command-line-utilities", "multimedia"]
+# keep the crates.io download small; the README's images load from GitHub
+exclude = ["docs/media/*", "docs/tools/*"]
+
 [[bin]]
 name = "tuinime"
 path = "src/main.rs"
