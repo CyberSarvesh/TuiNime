@@ -211,23 +211,43 @@ struct AnilistCover {
 }
 
 fn strip_html(s: &str) -> String {
-    // Cheap tag strip — full HTML parsing would require `scraper` on the description,
-    // but AniList descriptions are already sanitized HTML fragments.
+    // Cheap tag strip. `<br>` tags become newlines (they must be handled while stripping:
+    // once tags are removed there is nothing left to replace).
     let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
+    let mut tag: Option<String> = None;
     for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
+        match (&mut tag, c) {
+            (None, '<') => tag = Some(String::new()),
+            (Some(t), '>') => {
+                let name = t.trim_start_matches('/').trim().to_ascii_lowercase();
+                if name == "br" || name.starts_with("br ") || name.starts_with("br/") {
+                    out.push('\n');
+                }
+                tag = None;
+            }
+            (Some(t), c) => t.push(c),
+            (None, c) => out.push(c),
         }
     }
-    // Decode a few common entities
-    out.replace("&amp;", "&")
-        .replace("&lt;", "<")
+    // Decode a few common entities (`&amp;` last so `&amp;lt;` stays literal)
+    out.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&#039;", "'")
-        .replace("<br>", "\n")
+        .replace("&amp;", "&")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_html;
+
+    #[test]
+    fn br_tags_become_newlines() {
+        assert_eq!(strip_html("a<br>b<br/>c<BR />d"), "a\nb\nc\nd");
+    }
+
+    #[test]
+    fn strips_tags_and_decodes_entities() {
+        assert_eq!(strip_html("<i>Tom &amp; Jerry</i> &quot;hi&quot;"), "Tom & Jerry \"hi\"");
+    }
 }
